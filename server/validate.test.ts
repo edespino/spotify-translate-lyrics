@@ -20,8 +20,22 @@ describe("validateLineCount", () => {
     expect(() => validateLineCount({ lines: [] }, 0)).toThrow();
   });
 
-  it("coerces non-string members to strings", () => {
-    expect(validateLineCount(["a", 5, null], 3)).toEqual(["a", "5", ""]);
+  it("rejects arrays containing numbers", () => {
+    expect(() => validateLineCount(["a", 5, "c"], 3)).toThrow(
+      /non-string/
+    );
+  });
+
+  it("rejects arrays containing null", () => {
+    expect(() => validateLineCount(["a", null, "c"], 3)).toThrow(
+      /non-string/
+    );
+  });
+
+  it("rejects arrays containing objects", () => {
+    expect(() => validateLineCount(["a", { text: "b" }, "c"], 3)).toThrow(
+      /non-string/
+    );
   });
 });
 
@@ -45,6 +59,12 @@ describe("parseTranslationResponse", () => {
   it("throws LineCountError on wrong length", () => {
     expect(() => parseTranslationResponse('["one"]', 2)).toThrow(
       LineCountError
+    );
+  });
+
+  it("rejects a JSON array with non-string members", () => {
+    expect(() => parseTranslationResponse('["one", 2]', 2)).toThrow(
+      /non-string/
     );
   });
 });

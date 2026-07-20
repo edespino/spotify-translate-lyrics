@@ -4,6 +4,7 @@ const CLIENT_ID = import.meta.env.VITE_SPOTIFY_CLIENT_ID as string;
 const SCOPES = "user-read-currently-playing user-read-playback-state";
 const TOKEN_KEY = "spotify_tokens";
 const VERIFIER_KEY = "spotify_pkce_verifier";
+const STATE_KEY = "spotify_oauth_state";
 
 function redirectUri(): string {
   return `${window.location.origin}/callback`;
@@ -47,6 +48,8 @@ export async function beginLogin(): Promise<void> {
   const verifierBytes = crypto.getRandomValues(new Uint8Array(48));
   const verifier = base64Url(verifierBytes);
   localStorage.setItem(VERIFIER_KEY, verifier);
+  const state = base64Url(crypto.getRandomValues(new Uint8Array(24)));
+  localStorage.setItem(STATE_KEY, state);
   const digest = await crypto.subtle.digest(
     "SHA-256",
     new TextEncoder().encode(verifier)
@@ -57,6 +60,7 @@ export async function beginLogin(): Promise<void> {
     response_type: "code",
     redirect_uri: redirectUri(),
     scope: SCOPES,
+    state,
     code_challenge_method: "S256",
     code_challenge: challenge,
   });
@@ -79,10 +83,19 @@ async function tokenRequest(body: URLSearchParams): Promise<StoredTokens> {
   };
 }
 
-// Exchanges the ?code= from the redirect for tokens. Returns true on success.
-export async function handleCallback(code: string): Promise<boolean> {
+// Exchanges the ?code= from the redirect for tokens. Returns true on
+// success. The returned state must match the one stored before the
+// redirect, otherwise the callback is rejected.
+export async function handleCallback(
+  code: string,
+  state: string | null
+): Promise<boolean> {
   const verifier = localStorage.getItem(VERIFIER_KEY);
-  if (!verifier) return false;
+  const expectedState = localStorage.getItem(STATE_KEY);
+  localStorage.removeItem(STATE_KEY);
+  if (!verifier || !expectedState || !state || state !== expectedState) {
+    return false;
+  }
   try {
     const tokens = await tokenRequest(
       new URLSearchParams({
@@ -101,49 +114,74 @@ export async function handleCallback(code: string): Promise<boolean> {
   }
 }
 
-// Returns a valid access token, silently refreshing when expired.
-// Throws AuthError when re-auth is required.
 export class AuthError extends Error {}
 
+// Single-flight refresh: concurrent callers share one in-flight
+// token exchange instead of firing several.
+let refreshInFlight: Promise<StoredTokens> | null = null;
+
+function refreshTokens(): Promise<StoredTokens> {
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      const tokens = loadTokens();
+      if (!tokens?.refreshToken) {
+        clearTokens();
+        throw new AuthError("No refresh token");
+      }
+      try {
+        const fresh = await tokenRequest(
+          new URLSearchParams({
+            client_id: CLIENT_ID,
+            grant_type: "refresh_token",
+            refresh_token: tokens.refreshToken,
+          })
+        );
+        saveTokens(fresh);
+        return fresh;
+      } catch {
+        clearTokens();
+        throw new AuthError("Token refresh failed");
+      }
+    })().finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
+}
+
+// Returns a valid access token, silently refreshing when expired.
+// Throws AuthError when re-auth is required.
 async function getAccessToken(): Promise<string> {
   const tokens = loadTokens();
   if (!tokens) throw new AuthError("Not authenticated");
   if (Date.now() < tokens.expiresAt - 60000) return tokens.accessToken;
-  if (!tokens.refreshToken) {
-    clearTokens();
-    throw new AuthError("No refresh token");
-  }
-  try {
-    const fresh = await tokenRequest(
-      new URLSearchParams({
-        client_id: CLIENT_ID,
-        grant_type: "refresh_token",
-        refresh_token: tokens.refreshToken,
-      })
-    );
-    saveTokens(fresh);
-    return fresh.accessToken;
-  } catch {
-    clearTokens();
-    throw new AuthError("Token refresh failed");
-  }
+  return (await refreshTokens()).accessToken;
 }
 
 export class RateLimitError extends Error {}
 
-// Polls the currently playing track. Returns null when nothing is playing.
+function fetchPlayer(token: string): Promise<Response> {
+  return fetch("https://api.spotify.com/v1/me/player/currently-playing", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+// Polls the currently playing track. Returns null when nothing is
+// playing. A 401 triggers one refresh attempt and a retry; tokens are
+// only cleared when the refresh itself fails or the retry still 401s.
 export async function fetchCurrentlyPlaying(): Promise<PlaybackState | null> {
   const token = await getAccessToken();
-  const res = await fetch(
-    "https://api.spotify.com/v1/me/player/currently-playing",
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
+  let res = await fetchPlayer(token);
+  if (res.status === 401) {
+    const fresh = await refreshTokens();
+    res = await fetchPlayer(fresh.accessToken);
+    if (res.status === 401) {
+      clearTokens();
+      throw new AuthError("Unauthorized");
+    }
+  }
   if (res.status === 204) return null;
   if (res.status === 429) throw new RateLimitError("Rate limited");
-  if (res.status === 401) {
-    clearTokens();
-    throw new AuthError("Unauthorized");
-  }
   if (!res.ok) throw new Error(`Spotify error ${res.status}`);
   const data = await res.json();
   const item = data.item;
