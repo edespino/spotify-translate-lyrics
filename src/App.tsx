@@ -1,11 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  getTranslation,
-  requestTranslation,
-  resetOverride,
-  retranslate,
-  saveOverride,
-} from "./api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { resetOverride, retranslate, saveOverride } from "./api";
+import { isEnglishLyrics, lyricsPlainText, shouldTranslate } from "./detect";
+import { fetchTranslationIfNeeded } from "./translation";
 import { fetchLyrics } from "./lyrics";
 import LyricsView from "./components/LyricsView";
 import NowPlaying from "./components/NowPlaying";
@@ -103,31 +99,15 @@ export default function App() {
 
   const loadTranslation = useCallback(
     async (track: PlaybackState, result: LyricsResult) => {
-      if (result.kind !== "synced" && result.kind !== "plain") return;
+      if (!shouldTranslate(result)) return;
       setTranslation({ status: "loading" });
-      const texts =
-        result.kind === "synced"
-          ? result.lines.map((l) => l.text)
-          : result.lines;
-      const times =
-        result.kind === "synced"
-          ? result.lines.map((l) => l.timeMs)
-          : result.lines.map(() => 0);
       try {
-        const cached = await getTranslation(track.trackId);
+        const entry = await fetchTranslationIfNeeded(track, result);
         if (trackIdRef.current !== track.trackId) return;
-        if (cached) {
-          setTranslation({ status: "ready", entry: cached });
+        if (!entry) {
+          setTranslation({ status: "idle" });
           return;
         }
-        const entry = await requestTranslation(
-          track.trackId,
-          track.title,
-          track.artist,
-          texts,
-          times
-        );
-        if (trackIdRef.current !== track.trackId) return;
         setTranslation({ status: "ready", entry });
       } catch (err) {
         if (trackIdRef.current !== track.trackId) return;
@@ -171,6 +151,15 @@ export default function App() {
     lyrics.status === "ready" && lyrics.result.kind === "synced"
       ? lyrics.result.lines
       : null;
+
+  // English lyrics render as a single pane and are never translated.
+  const english = useMemo(
+    () =>
+      lyrics.status === "ready" &&
+      (lyrics.result.kind === "synced" || lyrics.result.kind === "plain") &&
+      isEnglishLyrics(lyricsPlainText(lyrics.result)),
+    [lyrics]
+  );
   useEffect(() => {
     if (!syncedLines) return;
     let raf: number;
@@ -240,6 +229,7 @@ export default function App() {
           (lyrics.result.kind === "synced" || lyrics.result.kind === "plain") && (
             <LyricsView
               lyrics={lyrics.result}
+              english={english}
               translation={translation}
               activeIndex={lyrics.result.kind === "synced" ? activeIndex : -1}
               onEdit={(i, field, text) =>
