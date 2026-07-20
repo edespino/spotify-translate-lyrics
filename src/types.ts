@@ -32,5 +32,7 @@ export interface TranslationEntry {
   trackId: string;
   title: string;
   artist: string;
+  // Absent in cache entries written before title translation existed.
+  titleEn?: string;
   lines: TranslationLine[];
 }

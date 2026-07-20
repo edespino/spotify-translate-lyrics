@@ -88,6 +88,15 @@ button.primary:hover {
   text-overflow: ellipsis;
 }
 
+.track-title-en {
+  color: var(--text-dim);
+  font-size: 13px;
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .track-artist {
   color: var(--text-dim);
   font-size: 14px;

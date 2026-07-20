@@ -24,6 +24,11 @@ function buildPrompt(lines: string[], meta: TrackMeta): string {
   return [
     `Translate these Spanish song lyrics to English. The song is "${meta.title}" by ${meta.artist}.`,
     "Translate idiomatically, preserving tone and meaning, not word for word.",
+    ...(meta.titleFirst
+      ? [
+          "The FIRST line of the input is the song title, not a lyric. Translate it as a title.",
+        ]
+      : []),
     `There are exactly ${lines.length} lines. Output exactly ${lines.length} lines in the same order.`,
     "Keep empty lines empty. Do not merge, split, or reorder lines.",
     "Output ONLY a JSON array of strings, one per input line. No other text.",
@@ -163,4 +168,42 @@ export async function translateLines(
     out.push(...result);
   }
   return out;
+}
+
+// Same contract as translateLines, with the song title prepended as
+// the first line of the batch so one request covers both. The N-in
+// N-out validation counts the title line; in the chunked fallback the
+// title rides in the first chunk and only that chunk's prompt gets the
+// title-first note.
+export async function translateLinesWithTitle(
+  provider: TranslationProvider,
+  lines: string[],
+  meta: TrackMeta
+): Promise<{ titleEn: string; en: string[] }> {
+  if (lines.length === 0) return { titleEn: "", en: [] };
+
+  const batch = [meta.title, ...lines];
+  const titledMeta: TrackMeta = { ...meta, titleFirst: true };
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = await callProvider(provider, batch, titledMeta);
+    if (result) return { titleEn: result[0], en: result.slice(1) };
+  }
+
+  const out: string[] = [];
+  for (let start = 0; start < batch.length; start += CHUNK_SIZE) {
+    const chunk = batch.slice(start, start + CHUNK_SIZE);
+    const result = await callProvider(
+      provider,
+      chunk,
+      start === 0 ? titledMeta : meta
+    );
+    if (!result) {
+      throw new TranslationFailedError(
+        `Translation failed for lines ${start + 1} to ${start + chunk.length}`
+      );
+    }
+    out.push(...result);
+  }
+  return { titleEn: out[0], en: out.slice(1) };
 }

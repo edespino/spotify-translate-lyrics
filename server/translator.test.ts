@@ -6,6 +6,7 @@ import {
   isRateLimitError,
   parseRetryDelayMs,
   translateLines,
+  translateLinesWithTitle,
 } from "./translator";
 import type { TrackMeta, TranslationProvider } from "./types";
 
@@ -196,6 +197,68 @@ describe("translateLines", () => {
     const p = mockProvider(async (lines) => lines);
     expect(await translateLines(p, [], meta)).toEqual([]);
     expect(p.calls).toHaveLength(0);
+  });
+});
+
+describe("translateLinesWithTitle", () => {
+  it("prepends the title, validates the full count, and splits titleEn off", async () => {
+    const p = mockProvider(async (lines) => lines.map((l) => `EN:${l}`));
+    const out = await translateLinesWithTitle(p, ["hola", "adios"], meta);
+    expect(p.calls).toEqual([["Song", "hola", "adios"]]);
+    expect(out).toEqual({ titleEn: "EN:Song", en: ["EN:hola", "EN:adios"] });
+  });
+
+  it("rejects a response that drops the title line", async () => {
+    let call = 0;
+    const p = mockProvider(async (lines) => {
+      call++;
+      // First two responses miss one line (the title), the rest match.
+      if (call <= 2) return lines.slice(1).map((l) => `EN:${l}`);
+      return lines.map((l) => `EN:${l}`);
+    });
+    const out = await translateLinesWithTitle(p, ["hola", "adios"], meta);
+    expect(out.titleEn).toBe("EN:Song");
+    // 2 failed batch attempts + 1 chunk holding title plus both lines
+    expect(p.calls).toHaveLength(3);
+  });
+
+  it("chunked fallback carries the title in the first chunk", async () => {
+    const lines = numbered(25);
+    const p = mockProvider(async (batch) => {
+      if (batch.length > 20) return ["wrong count"];
+      return batch.map((l) => `EN:${l}`);
+    });
+    const out = await translateLinesWithTitle(p, lines, meta);
+    // 2 batch attempts of 26, then chunks of 20 and 6
+    expect(p.calls.slice(2).map((c) => c.length)).toEqual([20, 6]);
+    expect(p.calls[2][0]).toBe("Song");
+    expect(p.calls[3][0]).toBe("linea 20");
+    expect(out.titleEn).toBe("EN:Song");
+    expect(out.en).toEqual(lines.map((l) => `EN:${l}`));
+  });
+
+  it("returns an empty result for empty input without calling the provider", async () => {
+    const p = mockProvider(async (lines) => lines);
+    expect(await translateLinesWithTitle(p, [], meta)).toEqual({
+      titleEn: "",
+      en: [],
+    });
+    expect(p.calls).toHaveLength(0);
+  });
+
+  it("passes the title-first note to the prompt only when set", async () => {
+    generateContentMock.mockResolvedValue({ text: '["Title EN", "hello"]' });
+    const provider = new GeminiProvider("api-key");
+    await provider.translate(["Song", "hola"], { ...meta, titleFirst: true });
+    expect(generateContentMock.mock.calls[0][0].contents).toContain(
+      "FIRST line of the input is the song title"
+    );
+
+    generateContentMock.mockResolvedValue({ text: '["hello"]' });
+    await provider.translate(["hola"], meta);
+    expect(generateContentMock.mock.calls[1][0].contents).not.toContain(
+      "FIRST line"
+    );
   });
 });
 
