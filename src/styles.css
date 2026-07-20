@@ -153,6 +153,20 @@ button.primary:hover {
   color: var(--text-dim);
 }
 
+.lyrics-view.single .pane-headers {
+  grid-template-columns: 1fr;
+  justify-items: center;
+}
+
+.lyrics-view.single .lyric-row {
+  grid-template-columns: 1fr;
+  text-align: center;
+}
+
+.lyrics-view.single .lyric-row.focused {
+  transform-origin: center center;
+}
+
 .translation-error {
   color: #e57373;
   text-transform: none;

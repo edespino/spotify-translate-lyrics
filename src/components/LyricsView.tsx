@@ -6,6 +6,7 @@ type Field = "es" | "en";
 
 interface Props {
   lyrics: Extract<LyricsResult, { kind: "synced" | "plain" }>;
+  english: boolean;
   translation: TranslationState;
   activeIndex: number;
   onEdit: (lineIndex: number, field: Field, text: string) => void;
@@ -26,6 +27,7 @@ interface Row {
 // scroll together, one pane per column.
 export default function LyricsView({
   lyrics,
+  english,
   translation,
   activeIndex,
   onEdit,
@@ -65,6 +67,41 @@ export default function LyricsView({
       behavior: "smooth",
     });
   }, [activeIndex]);
+
+  // English lyrics: one centered full-width pane, read-only. Same synced
+  // scrolling, active-line highlight, and click-to-enlarge as the dual
+  // view, but no translation column and no edit affordances.
+  if (english) {
+    return (
+      <div className="lyrics-view single">
+        <div className="pane-headers single">
+          <div className="pane-header">
+            <span>English</span>
+          </div>
+        </div>
+        <div className="lyrics-scroll" ref={containerRef}>
+          <div className="lyrics-grid">
+            {sourceTexts.map((text, i) => (
+              <div
+                key={i}
+                data-row={i}
+                className={[
+                  "lyric-row",
+                  lyrics.kind === "synced" && i === activeIndex ? "active" : "",
+                  i === focusedIndex ? "focused" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                onClick={() => setFocusedIndex(i === focusedIndex ? -1 : i)}
+              >
+                <div className="lyric-cell">{text || "♪"}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const startEdit = (index: number, field: Field) => {
     if (field === "en" && rows[index].en === null) return;

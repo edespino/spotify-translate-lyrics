@@ -37,6 +37,8 @@ You need Node 20+ and two free accounts.
 
 ## Usage notes
 
+Songs whose lyrics are already English are detected client-side and shown as a single centered pane, read-only, with no translation request made at all.
+
 Double-click any line to edit it, Enter saves, Escape cancels. Edited lines get a small marker and a per-line reset link. "Retranslate all" redoes the translation but never touches lines you edited. Clicking a line enlarges it.
 
 Translations and edits live in `data/translations/`, one JSON file per track. That directory is gitignored on purpose: it is derived from copyrighted lyrics and should never be committed.
