@@ -1,0 +1,78 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { TranslationCache } from "./cache";
+import type { TranslationEntry } from "./types";
+
+let dir: string;
+let cache: TranslationCache;
+
+const entry = (): TranslationEntry => ({
+  trackId: "track1",
+  title: "Cancion",
+  artist: "Artista",
+  lines: [
+    { timeMs: 0, es: "hola", en: "hello" },
+    { timeMs: 1000, es: "adios", en: "goodbye" },
+  ],
+});
+
+beforeEach(() => {
+  dir = mkdtempSync(path.join(tmpdir(), "cache-test-"));
+  cache = new TranslationCache(dir);
+});
+
+afterEach(() => {
+  rmSync(dir, { recursive: true, force: true });
+});
+
+describe("TranslationCache", () => {
+  it("returns null for a missing entry", async () => {
+    expect(await cache.read("nope")).toBeNull();
+  });
+
+  it("round-trips an entry", async () => {
+    await cache.write(entry());
+    expect(await cache.read("track1")).toEqual(entry());
+  });
+
+  it("rejects path traversal track ids", async () => {
+    await expect(cache.read("../etc/passwd")).rejects.toThrow();
+    await expect(
+      cache.write({ ...entry(), trackId: "a/b" })
+    ).rejects.toThrow();
+  });
+
+  it("sets and resets overrides", async () => {
+    await cache.write(entry());
+    let e = await cache.setOverride("track1", 0, "en", "hi there");
+    expect(e.lines[0].editedEn).toBe("hi there");
+    expect(e.lines[0].en).toBe("hello");
+
+    e = await cache.setOverride("track1", 1, "es", "chao");
+    expect(e.lines[1].editedEs).toBe("chao");
+
+    e = await cache.resetOverride("track1", 0, "en");
+    expect(e.lines[0].editedEn).toBeUndefined();
+
+    const stored = await cache.read("track1");
+    expect(stored?.lines[0].editedEn).toBeUndefined();
+    expect(stored?.lines[1].editedEs).toBe("chao");
+  });
+
+  it("throws when overriding a missing line", async () => {
+    await cache.write(entry());
+    await expect(cache.setOverride("track1", 99, "en", "x")).rejects.toThrow();
+    await expect(cache.setOverride("nope", 0, "en", "x")).rejects.toThrow();
+  });
+
+  it("retranslation skips lines with an English override", async () => {
+    const e = entry();
+    e.lines[0].editedEn = "my version";
+    cache.applyRetranslation(e, ["fresh hello", "fresh goodbye"]);
+    expect(e.lines[0].en).toBe("hello");
+    expect(e.lines[0].editedEn).toBe("my version");
+    expect(e.lines[1].en).toBe("fresh goodbye");
+  });
+});
