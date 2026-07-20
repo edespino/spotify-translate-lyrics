@@ -24,7 +24,7 @@ You need Node 20+ and two free accounts.
    cp .env.example .env
    ```
 
-   Fill in `VITE_SPOTIFY_CLIENT_ID` and `GEMINI_API_KEY`. `GEMINI_MODEL` is optional; it defaults to `gemini-2.5-flash-lite`, which has a higher free-tier request rate than `gemini-2.5-flash`. Translation runs in a few batched requests per song and backs off on rate limits, so the free tier is workable.
+   Fill in `VITE_SPOTIFY_CLIENT_ID` and `GEMINI_API_KEY`. `GEMINI_MODEL` is optional; it defaults to `gemini-flash-lite-latest`, an alias that tracks Google's current Flash Lite model. Translation runs in a few batched requests per song and backs off on rate limits, so the free tier is workable.
 
 4. Run:
 
