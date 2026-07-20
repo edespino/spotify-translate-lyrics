@@ -56,12 +56,20 @@ export default function LyricsView({
   });
 
   useEffect(() => {
-    if (activeIndex < 0) return;
     const container = containerRef.current;
-    const row = container?.querySelector<HTMLElement>(
+    if (!container) return;
+    if (activeIndex < 0) {
+      // No active line yet (intro, or plain unsynced lyrics): anchor the
+      // list at the top so the leading 40vh centering spacer is scrolled
+      // past instead of showing as a large gap above the first line.
+      const first = container.querySelector<HTMLElement>('[data-row="0"]');
+      if (first) container.scrollTo({ top: first.offsetTop, behavior: "auto" });
+      return;
+    }
+    const row = container.querySelector<HTMLElement>(
       `[data-row="${activeIndex}"]`
     );
-    if (!container || !row) return;
+    if (!row) return;
     container.scrollTo({
       top: row.offsetTop - container.clientHeight / 2 + row.offsetHeight / 2,
       behavior: "smooth",
