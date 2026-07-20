@@ -2,7 +2,23 @@ import { GoogleGenAI } from "@google/genai";
 import type { TrackMeta, TranslationProvider } from "./types";
 import { parseTranslationResponse } from "./validate";
 
-const MODEL = "gemini-2.5-flash";
+export const DEFAULT_MODEL = "gemini-2.5-flash-lite";
+
+// Chunk size for the fallback path. Big enough that a typical song
+// needs only a handful of requests, small enough that the model can
+// hold the exact line count.
+const CHUNK_SIZE = 20;
+
+// Rate-limit retry policy per provider call: the initial attempt plus
+// this many retries, waiting between attempts.
+const MAX_RATE_LIMIT_RETRIES = 2;
+const DEFAULT_RETRY_DELAY_MS = 15000;
+const MAX_RETRY_DELAY_MS = 60000;
+
+// Thrown when translation cannot be completed. The server must treat
+// this as a hard failure: return an error and cache nothing. Original
+// Spanish text must never be passed off as an English translation.
+export class TranslationFailedError extends Error {}
 
 function buildPrompt(lines: string[], meta: TrackMeta): string {
   return [
@@ -19,14 +35,16 @@ function buildPrompt(lines: string[], meta: TrackMeta): string {
 
 export class GeminiProvider implements TranslationProvider {
   private client: GoogleGenAI;
+  private model: string;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, model: string = DEFAULT_MODEL) {
     this.client = new GoogleGenAI({ apiKey });
+    this.model = model;
   }
 
   async translate(lines: string[], meta: TrackMeta): Promise<string[]> {
     const response = await this.client.models.generateContent({
-      model: MODEL,
+      model: this.model,
       contents: buildPrompt(lines, meta),
       config: { responseMimeType: "application/json" },
     });
@@ -34,34 +52,93 @@ export class GeminiProvider implements TranslationProvider {
   }
 }
 
-// Runs the provider with the line-count contract: on a bad result,
-// retry the whole batch once, then fall back to line-by-line calls.
-// A line whose individual call also fails keeps its original text.
+function errorText(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
+export function isRateLimitError(err: unknown): boolean {
+  const status = (err as { status?: unknown })?.status;
+  const code = (err as { code?: unknown })?.code;
+  if (status === 429 || code === 429) return true;
+  return /\b429\b|RESOURCE_EXHAUSTED/.test(errorText(err));
+}
+
+// Gemini 429 errors carry a suggested wait, either as a RetryInfo
+// detail ("retryDelay": "7s") or as prose ("Please retry in 7.5s").
+export function parseRetryDelayMs(err: unknown): number | null {
+  const text = errorText(err);
+  const match =
+    text.match(/"retryDelay"\s*:\s*"([\d.]+)s"/) ||
+    text.match(/retry in ([\d.]+)\s*s/i);
+  if (!match) return null;
+  const seconds = Number(match[1]);
+  if (!Number.isFinite(seconds) || seconds < 0) return null;
+  return Math.min(Math.round(seconds * 1000), MAX_RETRY_DELAY_MS);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// One provider call with rate-limit handling. Returns null on a soft
+// failure (bad line count, non-429 provider error) so the caller can
+// fall back. Throws TranslationFailedError when the rate limit does
+// not clear within the retry budget: burning more quota on fallback
+// requests at that point would only make things worse.
+async function callProvider(
+  provider: TranslationProvider,
+  lines: string[],
+  meta: TrackMeta
+): Promise<string[] | null> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const result = await provider.translate(lines, meta);
+      return result.length === lines.length ? result : null;
+    } catch (err) {
+      if (!isRateLimitError(err)) return null;
+      if (attempt >= MAX_RATE_LIMIT_RETRIES) {
+        throw new TranslationFailedError(
+          "Translation provider rate limit not cleared after retries"
+        );
+      }
+      const delay =
+        parseRetryDelayMs(err) ?? DEFAULT_RETRY_DELAY_MS * (attempt + 1);
+      await sleep(delay);
+    }
+  }
+}
+
+// Runs the provider with the line-count contract: try the full batch
+// twice, then fall back to chunks of CHUNK_SIZE lines, each still
+// strictly N-in N-out. Any chunk failure fails the whole translation;
+// there is no per-line fallback and never a partial result.
 export async function translateLines(
   provider: TranslationProvider,
   lines: string[],
   meta: TrackMeta
 ): Promise<string[]> {
+  if (lines.length === 0) return [];
+
   for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const result = await provider.translate(lines, meta);
-      if (result.length === lines.length) return result;
-    } catch {
-      // fall through to retry or fallback
-    }
+    const result = await callProvider(provider, lines, meta);
+    if (result) return result;
   }
+
   const out: string[] = [];
-  for (const line of lines) {
-    if (line.trim() === "") {
-      out.push("");
-      continue;
+  for (let start = 0; start < lines.length; start += CHUNK_SIZE) {
+    const chunk = lines.slice(start, start + CHUNK_SIZE);
+    const result = await callProvider(provider, chunk, meta);
+    if (!result) {
+      throw new TranslationFailedError(
+        `Translation failed for lines ${start + 1} to ${start + chunk.length}`
+      );
     }
-    try {
-      const single = await provider.translate([line], meta);
-      out.push(single.length === 1 ? single[0] : line);
-    } catch {
-      out.push(line);
-    }
+    out.push(...result);
   }
   return out;
 }

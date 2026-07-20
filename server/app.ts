@@ -1,6 +1,6 @@
 import express from "express";
 import { TranslationCache } from "./cache";
-import { translateLines } from "./translator";
+import { TranslationFailedError, translateLines } from "./translator";
 import type { TranslationEntry, TranslationProvider } from "./types";
 
 export function createApp(provider: TranslationProvider, dataDir: string) {
@@ -57,11 +57,15 @@ export function createApp(provider: TranslationProvider, dataDir: string) {
           return entry;
         })();
         inFlight.set(trackId, pending);
-        pending.finally(() => inFlight.delete(trackId));
+        // The .finally() chain is its own promise; swallow its
+        // rejection so a failed translation is only reported through
+        // the awaited `pending` below.
+        pending.finally(() => inFlight.delete(trackId)).catch(() => {});
       }
       res.json(await pending);
     } catch (err: any) {
-      res.status(500).json({ error: err?.message || "Translation failed" });
+      const status = err instanceof TranslationFailedError ? 502 : 500;
+      res.status(status).json({ error: err?.message || "Translation failed" });
     }
   });
 
@@ -83,7 +87,8 @@ export function createApp(provider: TranslationProvider, dataDir: string) {
       await cache.write(entry);
       res.json(entry);
     } catch (err: any) {
-      res.status(500).json({ error: err?.message || "Retranslation failed" });
+      const status = err instanceof TranslationFailedError ? 502 : 500;
+      res.status(status).json({ error: err?.message || "Retranslation failed" });
     }
   });
 
