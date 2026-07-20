@@ -15,7 +15,7 @@ Personal web app: shows time-synced Spanish lyrics for the currently playing Spo
 - `src/App.tsx` state machine: auth, poll loop, per-track lyrics + translation loading, requestAnimationFrame loop for the active line.
 - `src/components/LyricsView.tsx` both languages render in ONE scroll container as two-column grid rows, so lines stay vertically aligned by construction; the active row is smooth-scrolled to center. Double-click edits a cell, click enlarges a row.
 - `server/app.ts` Express app factory (takes a provider and data dir, which is what the integration tests use).
-- `server/translator.ts` provider interface plus the Gemini implementation (@google/genai, gemini-2.5-flash, JSON array in and out). translateLines enforces the N-in N-out contract: retry the batch once, then per-line fallback, keep the original text if a single line still fails.
+- `server/translator.ts` provider interface plus the Gemini implementation (@google/genai, model from GEMINI_MODEL, default gemini-2.5-flash-lite, JSON array in and out). translateLines enforces the N-in N-out contract: retry the batch once, then fall back to chunks of 20 lines, each strictly validated. A 429 waits for the provider's suggested retry delay (bounded attempts). Any chunk failure fails the whole translation with TranslationFailedError; the server answers 502 and caches nothing. Original text is never returned as a translation.
 - `server/cache.ts` disk cache at data/translations/<trackId>.json. Overrides (editedEs/editedEn) always win; retranslate never overwrites en on a line with editedEn.
 - API: POST /api/translate, POST /api/retranslate, POST /api/override, POST /api/override/reset, GET /api/translations/:trackId. Frontend reaches it through the Vite proxy at /api.
 

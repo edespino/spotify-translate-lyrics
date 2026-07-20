@@ -63,12 +63,12 @@ describe("translation server", () => {
     expect(provider.translate).toHaveBeenCalledTimes(1);
   });
 
-  it("line-count mismatch triggers retry then per-line fallback", async () => {
+  it("line-count mismatch triggers retry then chunked fallback", async () => {
     let call = 0;
     const provider = providerWith(async (lines) => {
       call++;
-      if (lines.length > 1) return ["wrong count"];
-      return [`EN:${lines[0]}`];
+      if (call <= 2) return ["wrong count"];
+      return lines.map((l) => `EN:${l}`);
     });
     const app = createApp(provider, dir);
 
@@ -78,8 +78,65 @@ describe("translation server", () => {
       "EN:hola",
       "EN:adios",
     ]);
-    // 2 failed batch attempts + 2 per-line calls
-    expect(call).toBe(4);
+    // 2 failed batch attempts + 1 chunk (both lines fit in one chunk)
+    expect(call).toBe(3);
+  });
+
+  it("translation failure returns 502 and caches nothing", async () => {
+    const provider = providerWith(async () => {
+      throw new Error("provider down");
+    });
+    const app = createApp(provider, dir);
+
+    const res = await request(app).post("/api/translate").send(body);
+    expect(res.status).toBe(502);
+    expect(res.body.error).toBeTruthy();
+
+    const got = await request(app).get("/api/translations/abc123");
+    expect(got.status).toBe(404);
+  });
+
+  it("a retry after a failure reaches the provider again and succeeds", async () => {
+    let healthy = false;
+    const provider = providerWith(async (lines) => {
+      if (!healthy) throw new Error("provider down");
+      return lines.map((l) => `EN:${l}`);
+    });
+    const app = createApp(provider, dir);
+
+    expect((await request(app).post("/api/translate").send(body)).status).toBe(
+      502
+    );
+    healthy = true;
+    const res = await request(app).post("/api/translate").send(body);
+    expect(res.status).toBe(200);
+    expect(res.body.lines.map((l: any) => l.en)).toEqual([
+      "EN:hola",
+      "EN:adios",
+    ]);
+  });
+
+  it("retranslate failure returns 502 and keeps the cached entry intact", async () => {
+    let healthy = true;
+    const provider = providerWith(async (lines) => {
+      if (!healthy) throw new Error("provider down");
+      return lines.map((l) => `EN:${l}`);
+    });
+    const app = createApp(provider, dir);
+
+    await request(app).post("/api/translate").send(body);
+    healthy = false;
+    const res = await request(app)
+      .post("/api/retranslate")
+      .send({ trackId: "abc123" });
+    expect(res.status).toBe(502);
+
+    const got = await request(app).get("/api/translations/abc123");
+    expect(got.status).toBe(200);
+    expect(got.body.lines.map((l: any) => l.en)).toEqual([
+      "EN:hola",
+      "EN:adios",
+    ]);
   });
 
   it("returns 404 for an uncached track", async () => {
