@@ -36,6 +36,39 @@ const SPANGLISH = [
   "Mi amor, you are my sueño",
 ].join("\n");
 
+const PORTUGUESE = [
+  "Eu caminhava pela rua esta noite",
+  "E voce esperava perto da porta",
+  "Todas as coisas que nunca dissemos",
+  "Ficaram escritas no meu coracao",
+  "Mas eu sei que quando chegar o dia",
+  "Voce nao vai estar mais aqui",
+  "Sigo dirigindo embaixo da chuva",
+  "So para ver seu rosto mais uma vez",
+].join("\n");
+
+const ITALIAN = [
+  "Camminavo per la strada stanotte",
+  "E tu aspettavi vicino alla porta",
+  "Tutte le cose che non abbiamo detto",
+  "Sono rimaste scritte nel mio cuore",
+  "Ma io so che quando arriva il giorno",
+  "Tu non sarai piu qui con me",
+  "Continuo a guidare sotto la pioggia",
+  "Solo per vedere il tuo viso ancora",
+].join("\n");
+
+const FRENCH = [
+  "Je marchais dans la rue ce soir",
+  "Et tu attendais pres de la porte",
+  "Toutes les choses que nous n'avons pas dites",
+  "Sont restees ecrites dans mon coeur",
+  "Mais je sais que quand le jour viendra",
+  "Tu ne seras plus jamais la pour moi",
+  "Je continue de rouler sous la pluie",
+  "Juste pour voir ton visage encore",
+].join("\n");
+
 describe("isEnglishLyrics", () => {
   it("classifies clearly English lyrics as English", () => {
     expect(isEnglishLyrics(ENGLISH)).toBe(true);
@@ -47,6 +80,22 @@ describe("isEnglishLyrics", () => {
 
   it("classifies mixed Spanglish lyrics as not English", () => {
     expect(isEnglishLyrics(SPANGLISH)).toBe(false);
+  });
+
+  it("classifies Portuguese lyrics as not English", () => {
+    expect(isEnglishLyrics(PORTUGUESE)).toBe(false);
+  });
+
+  it("classifies Italian lyrics as not English", () => {
+    expect(isEnglishLyrics(ITALIAN)).toBe(false);
+  });
+
+  it("classifies French lyrics as not English", () => {
+    expect(isEnglishLyrics(FRENCH)).toBe(false);
+  });
+
+  it("disqualifies on non-Spanish accented characters", () => {
+    expect(isEnglishLyrics(ENGLISH + "\nnão vou voltar atrás")).toBe(false);
   });
 
   it("treats very short or empty text as not English", () => {
