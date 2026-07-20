@@ -1,11 +1,23 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  DEFAULT_MODEL,
+  GeminiProvider,
   TranslationFailedError,
   isRateLimitError,
   parseRetryDelayMs,
   translateLines,
 } from "./translator";
 import type { TrackMeta, TranslationProvider } from "./types";
+
+const generateContentMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@google/genai", () => ({
+  GoogleGenAI: vi.fn(() => ({
+    models: {
+      generateContent: generateContentMock,
+    },
+  })),
+}));
 
 const meta: TrackMeta = { trackId: "t1", title: "Song", artist: "Artist" };
 
@@ -37,6 +49,39 @@ function numbered(n: number): string[] {
 
 afterEach(() => {
   vi.useRealTimers();
+  generateContentMock.mockReset();
+});
+
+describe("GeminiProvider", () => {
+  it("uses the Flash Lite latest alias by default", async () => {
+    generateContentMock.mockResolvedValue({ text: '["hello"]' });
+
+    const provider = new GeminiProvider("api-key");
+    await expect(provider.translate(["hola"], meta)).resolves.toEqual([
+      "hello",
+    ]);
+
+    expect(generateContentMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: DEFAULT_MODEL,
+      })
+    );
+    expect(DEFAULT_MODEL).toBe("gemini-flash-lite-latest");
+  });
+
+  it("surfaces a clear error for an unavailable configured Gemini model", async () => {
+    const err = new Error(
+      "got status: 404. This model retired-model is no longer available to new users"
+    );
+    (err as any).status = 404;
+    generateContentMock.mockRejectedValue(err);
+
+    const provider = new GeminiProvider("api-key", "retired-model");
+    await expect(translateLines(provider, ["hola"], meta)).rejects.toThrow(
+      'Gemini model "retired-model" is unavailable. Set GEMINI_MODEL to a supported Gemini model, for example gemini-flash-lite-latest.'
+    );
+    expect(generateContentMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("translateLines", () => {

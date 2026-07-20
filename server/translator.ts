@@ -2,7 +2,7 @@ import { GoogleGenAI } from "@google/genai";
 import type { TrackMeta, TranslationProvider } from "./types";
 import { parseTranslationResponse } from "./validate";
 
-export const DEFAULT_MODEL = "gemini-2.5-flash-lite";
+export const DEFAULT_MODEL = "gemini-flash-lite-latest";
 
 // Chunk size for the fallback path. Big enough that a typical song
 // needs only a handful of requests, small enough that the model can
@@ -43,12 +43,21 @@ export class GeminiProvider implements TranslationProvider {
   }
 
   async translate(lines: string[], meta: TrackMeta): Promise<string[]> {
-    const response = await this.client.models.generateContent({
-      model: this.model,
-      contents: buildPrompt(lines, meta),
-      config: { responseMimeType: "application/json" },
-    });
-    return parseTranslationResponse(response.text ?? "", lines.length);
+    try {
+      const response = await this.client.models.generateContent({
+        model: this.model,
+        contents: buildPrompt(lines, meta),
+        config: { responseMimeType: "application/json" },
+      });
+      return parseTranslationResponse(response.text ?? "", lines.length);
+    } catch (err) {
+      if (isModelNotFoundError(err)) {
+        throw new TranslationFailedError(
+          `Gemini model "${this.model}" is unavailable. Set GEMINI_MODEL to a supported Gemini model, for example ${DEFAULT_MODEL}.`
+        );
+      }
+      throw err;
+    }
   }
 }
 
@@ -66,6 +75,18 @@ export function isRateLimitError(err: unknown): boolean {
   const code = (err as { code?: unknown })?.code;
   if (status === 429 || code === 429) return true;
   return /\b429\b|RESOURCE_EXHAUSTED/.test(errorText(err));
+}
+
+function isModelNotFoundError(err: unknown): boolean {
+  const status = (err as { status?: unknown })?.status;
+  const code = (err as { code?: unknown })?.code;
+  const text = errorText(err);
+  const isNotFound = status === 404 || code === 404 || /\b404\b/.test(text);
+  return (
+    isNotFound &&
+    /model/i.test(text) &&
+    /(not found|no longer available|not available|unavailable)/i.test(text)
+  );
 }
 
 // Gemini 429 errors carry a suggested wait, either as a RetryInfo
@@ -100,6 +121,7 @@ async function callProvider(
       const result = await provider.translate(lines, meta);
       return result.length === lines.length ? result : null;
     } catch (err) {
+      if (err instanceof TranslationFailedError) throw err;
       if (!isRateLimitError(err)) return null;
       if (attempt >= MAX_RATE_LIMIT_RETRIES) {
         throw new TranslationFailedError(
