@@ -49,8 +49,9 @@ export default function App() {
   useEffect(() => {
     const url = new URL(window.location.href);
     const code = url.searchParams.get("code");
+    const state = url.searchParams.get("state");
     if (window.location.pathname === "/callback" && code) {
-      handleCallback(code).then((ok) => {
+      handleCallback(code, state).then((ok) => {
         window.history.replaceState({}, "", "/");
         setAuth(ok ? "loggedIn" : "loggedOut");
       });

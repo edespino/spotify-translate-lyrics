@@ -30,5 +30,8 @@ export function validateLineCount(value: unknown, expected: number): string[] {
   if (value.length !== expected) {
     throw new LineCountError(expected, value.length);
   }
-  return value.map((v) => (typeof v === "string" ? v : String(v ?? "")));
+  if (!value.every((v) => typeof v === "string")) {
+    throw new Error("Provider response contains non-string members");
+  }
+  return value as string[];
 }
