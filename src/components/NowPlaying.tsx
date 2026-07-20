@@ -1,4 +1,5 @@
 import type { LyricsState, TranslationState } from "../App";
+import { translatedTitle } from "../translation";
 import type { PlaybackState } from "../types";
 
 interface Props {
@@ -43,6 +44,12 @@ export default function NowPlaying({
   translation,
   rateLimited,
 }: Props) {
+  // English songs never reach "ready" (translation stays idle), so the
+  // secondary title only appears for translated tracks.
+  const titleEn =
+    translation.status === "ready"
+      ? translatedTitle(playback.title, translation.entry.titleEn)
+      : null;
   return (
     <header className="now-playing">
       {playback.albumArtUrl && (
@@ -50,6 +57,7 @@ export default function NowPlaying({
       )}
       <div className="track-info">
         <div className="track-title">{playback.title}</div>
+        {titleEn && <div className="track-title-en">{titleEn}</div>}
         <div className="track-artist">{playback.artist}</div>
       </div>
       <div className="status">

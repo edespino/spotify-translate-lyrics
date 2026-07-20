@@ -1,4 +1,10 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import request from "supertest";
@@ -39,6 +45,7 @@ describe("translation server", () => {
 
     const res = await request(app).post("/api/translate").send(body);
     expect(res.status).toBe(200);
+    expect(res.body.titleEn).toBe("EN:Cancion");
     expect(res.body.lines).toEqual([
       { timeMs: 0, es: "hola", en: "EN:hola" },
       { timeMs: 2000, es: "adios", en: "EN:adios" },
@@ -184,7 +191,8 @@ describe("translation server", () => {
       .post("/api/override")
       .send({ trackId: "abc123", lineIndex: 1, field: "es", text: "chao" });
     await request(app).post("/api/retranslate").send({ trackId: "abc123" });
-    expect(sources[1]).toEqual(["hola", "chao"]);
+    // The title is prepended as the first batch line on every pass.
+    expect(sources[1]).toEqual(["Cancion", "hola", "chao"]);
   });
 
   it("reset removes an override", async () => {
@@ -203,6 +211,87 @@ describe("translation server", () => {
     expect(res.status).toBe(200);
     expect(res.body.lines[0].editedEn).toBeUndefined();
     expect(res.body.lines[0].en).toBe("EN:hola");
+  });
+
+  it("prepends the title to the batch and writes titleEn to the cache", async () => {
+    const sources: string[][] = [];
+    const provider = providerWith(async (lines) => {
+      sources.push(lines);
+      return lines.map((l) => `EN:${l}`);
+    });
+    const app = createApp(provider, dir);
+
+    const res = await request(app).post("/api/translate").send(body);
+    expect(res.status).toBe(200);
+    expect(sources[0]).toEqual(["Cancion", "hola", "adios"]);
+    expect(res.body.titleEn).toBe("EN:Cancion");
+
+    const file = JSON.parse(
+      readFileSync(path.join(dir, "translations", "abc123.json"), "utf8")
+    );
+    expect(file.titleEn).toBe("EN:Cancion");
+    expect(file.lines.map((l: any) => l.en)).toEqual(["EN:hola", "EN:adios"]);
+  });
+
+  it("serves a pre-title cache entry without titleEn and without the provider", async () => {
+    const provider = providerWith(async (lines) =>
+      lines.map((l) => `EN:${l}`)
+    );
+    const app = createApp(provider, dir);
+    mkdirSync(path.join(dir, "translations"), { recursive: true });
+    writeFileSync(
+      path.join(dir, "translations", "abc123.json"),
+      JSON.stringify({
+        trackId: "abc123",
+        title: "Cancion",
+        artist: "Artista",
+        lines: [
+          { timeMs: 0, es: "hola", en: "old hello" },
+          { timeMs: 2000, es: "adios", en: "old bye" },
+        ],
+      })
+    );
+
+    const res = await request(app).post("/api/translate").send(body);
+    expect(res.status).toBe(200);
+    expect(res.body.titleEn).toBeUndefined();
+    expect(res.body.lines[0].en).toBe("old hello");
+    expect(provider.translate).not.toHaveBeenCalled();
+
+    const got = await request(app).get("/api/translations/abc123");
+    expect(got.status).toBe(200);
+    expect(got.body.titleEn).toBeUndefined();
+  });
+
+  it("retranslate refreshes titleEn, including on a pre-title cache entry", async () => {
+    let pass = 0;
+    const provider = providerWith(async (lines) => {
+      pass++;
+      return lines.map((l) => `EN${pass}:${l}`);
+    });
+    const app = createApp(provider, dir);
+    mkdirSync(path.join(dir, "translations"), { recursive: true });
+    writeFileSync(
+      path.join(dir, "translations", "abc123.json"),
+      JSON.stringify({
+        trackId: "abc123",
+        title: "Cancion",
+        artist: "Artista",
+        lines: [{ timeMs: 0, es: "hola", en: "old hello" }],
+      })
+    );
+
+    const res = await request(app)
+      .post("/api/retranslate")
+      .send({ trackId: "abc123" });
+    expect(res.status).toBe(200);
+    expect(res.body.titleEn).toBe("EN1:Cancion");
+    expect(res.body.lines[0].en).toBe("EN1:hola");
+
+    const file = JSON.parse(
+      readFileSync(path.join(dir, "translations", "abc123.json"), "utf8")
+    );
+    expect(file.titleEn).toBe("EN1:Cancion");
   });
 
   it("rejects malformed requests", async () => {

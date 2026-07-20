@@ -21,3 +21,17 @@ export async function fetchTranslationIfNeeded(
   if (cached) return cached;
   return requestTranslation(track.trackId, track.title, track.artist, texts, times);
 }
+
+// Translated title to show as secondary text in the header, or null
+// when there is nothing worth showing: missing (for example a cache
+// entry from before title translation), empty, or the same as the
+// original ignoring case and surrounding whitespace.
+export function translatedTitle(
+  original: string,
+  titleEn: string | undefined
+): string | null {
+  const en = titleEn?.trim();
+  if (!en) return null;
+  if (en.toLowerCase() === original.trim().toLowerCase()) return null;
+  return en;
+}

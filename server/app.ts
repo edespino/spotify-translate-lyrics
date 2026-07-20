@@ -1,6 +1,6 @@
 import express from "express";
 import { TranslationCache } from "./cache";
-import { TranslationFailedError, translateLines } from "./translator";
+import { TranslationFailedError, translateLinesWithTitle } from "./translator";
 import type { TranslationEntry, TranslationProvider } from "./types";
 
 export function createApp(provider: TranslationProvider, dataDir: string) {
@@ -38,15 +38,20 @@ export function createApp(provider: TranslationProvider, dataDir: string) {
       let pending = inFlight.get(trackId);
       if (!pending) {
         pending = (async () => {
-          const en = await translateLines(provider, lines, {
-            trackId,
-            title: String(title ?? ""),
-            artist: String(artist ?? ""),
-          });
+          const { titleEn, en } = await translateLinesWithTitle(
+            provider,
+            lines,
+            {
+              trackId,
+              title: String(title ?? ""),
+              artist: String(artist ?? ""),
+            }
+          );
           const entry: TranslationEntry = {
             trackId,
             title: String(title ?? ""),
             artist: String(artist ?? ""),
+            titleEn,
             lines: lines.map((es: string, i: number) => ({
               timeMs: Array.isArray(timesMs) ? Number(timesMs[i]) || 0 : 0,
               es,
@@ -78,11 +83,16 @@ export function createApp(provider: TranslationProvider, dataDir: string) {
       const entry = await cache.read(trackId);
       if (!entry) return res.status(404).json({ error: "Not cached" });
       const source = entry.lines.map((l) => l.editedEs ?? l.es);
-      const fresh = await translateLines(provider, source, {
-        trackId,
-        title: entry.title,
-        artist: entry.artist,
-      });
+      const { titleEn, en: fresh } = await translateLinesWithTitle(
+        provider,
+        source,
+        {
+          trackId,
+          title: entry.title,
+          artist: entry.artist,
+        }
+      );
+      entry.titleEn = titleEn;
       cache.applyRetranslation(entry, fresh);
       await cache.write(entry);
       res.json(entry);
