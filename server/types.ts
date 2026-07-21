@@ -23,6 +23,24 @@ export interface GlossEntry {
   note: string;
 }
 
+// One saved vocabulary word. The id is the sha1 of the normalized
+// word+context pair (same normalization as the gloss cache), so it is
+// stable and doubles as the dedupe key.
+export interface VocabEntry {
+  id: string;
+  word: string;
+  gloss: string;
+  partOfSpeech: string;
+  note: string;
+  contextLine: string;
+  trackId: string;
+  trackTitle: string;
+  artist: string;
+  savedAt: string;
+}
+
+export type VocabInput = Omit<VocabEntry, "id" | "savedAt">;
+
 export interface TrackMeta {
   trackId: string;
   title: string;

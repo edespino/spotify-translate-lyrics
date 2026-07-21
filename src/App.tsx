@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { resetOverride, retranslate, saveOverride } from "./api";
+import {
+  deleteVocab,
+  listVocab,
+  resetOverride,
+  retranslate,
+  saveOverride,
+  saveVocab,
+} from "./api";
 import { isEnglishLyrics, lyricsPlainText, shouldTranslate } from "./detect";
 import { fetchTranslationIfNeeded } from "./translation";
 import { fetchLyrics } from "./lyrics";
@@ -7,7 +14,15 @@ import EmptyState from "./components/EmptyState";
 import { lyricsEmptyState } from "./components/stateScreen";
 import LyricsView from "./components/LyricsView";
 import NowPlaying from "./components/NowPlaying";
+import VocabPanel from "./components/VocabPanel";
 import { isTypingTarget } from "./components/lyricsRow";
+import {
+  insertBySavedAt,
+  savedKeySet,
+  upsertEntry,
+  vocabKey,
+} from "./components/vocab";
+import type { GlossEntry } from "./gloss";
 import {
   AuthError,
   RateLimitError,
@@ -19,7 +34,12 @@ import {
   seekTo,
 } from "./spotify";
 import { PositionTracker, findActiveLine } from "./sync";
-import type { LyricsResult, PlaybackState, TranslationEntry } from "./types";
+import type {
+  LyricsResult,
+  PlaybackState,
+  TranslationEntry,
+  VocabEntry,
+} from "./types";
 
 type AuthState = "checking" | "loggedOut" | "loggedIn";
 type LyricsState = { status: "idle" | "loading" | "error" } | {
@@ -60,6 +80,75 @@ export default function App() {
     setNotice(message);
     noticeTimer.current = setTimeout(() => setNotice(null), 4000);
   }, []);
+
+  // Saved vocabulary: fetched once per app load, then kept in sync
+  // optimistically on save and delete with rollback on failure.
+  const [vocab, setVocab] = useState<VocabEntry[]>([]);
+  const [vocabOpen, setVocabOpen] = useState(false);
+
+  useEffect(() => {
+    if (auth !== "loggedIn") return;
+    let cancelled = false;
+    listVocab()
+      .then((entries) => {
+        if (!cancelled) setVocab(entries);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [auth]);
+
+  const savedGlossKeys = useMemo(() => savedKeySet(vocab), [vocab]);
+
+  const saveGlossToVocab = useCallback(
+    (entry: GlossEntry, contextLine: string) => {
+      if (!playback) return;
+      const key = vocabKey(entry.word, contextLine);
+      if (savedGlossKeys.has(key)) return;
+      const input = {
+        word: entry.word,
+        gloss: entry.gloss,
+        partOfSpeech: entry.partOfSpeech,
+        note: entry.note,
+        contextLine,
+        trackId: playback.trackId,
+        trackTitle: playback.title,
+        artist: playback.artist,
+      };
+      // Optimistic: show the entry immediately under a provisional id;
+      // the server response swaps in the real id and savedAt, a failure
+      // rolls the entry back out.
+      const provisional: VocabEntry = {
+        id: `pending:${key}`,
+        ...input,
+        savedAt: new Date().toISOString(),
+      };
+      setVocab((v) => upsertEntry(v, provisional));
+      saveVocab(input)
+        .then(({ entry: saved }) => setVocab((v) => upsertEntry(v, saved)))
+        .catch(() => {
+          setVocab((v) => v.filter((e) => e.id !== provisional.id));
+          showNotice("Could not save word");
+        });
+    },
+    [playback, savedGlossKeys, showNotice]
+  );
+
+  const removeVocabEntry = useCallback(
+    (id: string) => {
+      const entry = vocab.find((e) => e.id === id);
+      if (!entry) return;
+      setVocab((v) => v.filter((e) => e.id !== id));
+      deleteVocab(id).catch(() => {
+        setVocab((v) =>
+          v.some((e) => e.id === id) ? v : insertBySavedAt(v, entry)
+        );
+        showNotice("Could not delete word");
+      });
+    },
+    [vocab, showNotice]
+  );
 
   // Handle the OAuth redirect, then decide the auth state.
   useEffect(() => {
@@ -300,6 +389,8 @@ export default function App() {
         lyrics={lyrics}
         translation={translation}
         rateLimited={rateLimited}
+        vocabOpen={vocabOpen}
+        onToggleVocab={() => setVocabOpen((open) => !open)}
       />
       <main className="content">
         {empty && (
@@ -342,9 +433,18 @@ export default function App() {
                 loadTranslation(playback, lyrics.result)
               }
               onReplay={replayLine}
+              savedGlossKeys={savedGlossKeys}
+              onSaveGloss={saveGlossToVocab}
             />
           )}
       </main>
+      {vocabOpen && (
+        <VocabPanel
+          entries={vocab}
+          onDelete={removeVocabEntry}
+          onClose={() => setVocabOpen(false)}
+        />
+      )}
       {notice && (
         <div className="notice" role="status">
           {notice}

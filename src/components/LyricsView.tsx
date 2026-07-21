@@ -1,7 +1,9 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { TranslationState } from "../App";
 import type { LyricsResult } from "../types";
+import type { GlossEntry } from "../gloss";
 import { GlossInvalidError, fetchGloss, isAbortError } from "../gloss";
+import { vocabKey } from "./vocab";
 import {
   GLOSS_ERROR_MS,
   GLOSS_GAP,
@@ -51,6 +53,8 @@ interface Props {
   onRetranslate: () => void;
   onRetryTranslation: () => void;
   onReplay: (timeMs: number) => void;
+  savedGlossKeys: ReadonlySet<string>;
+  onSaveGloss: (entry: GlossEntry, contextLine: string) => void;
 }
 
 // Fraction of the pane height where the active line is anchored. Upper
@@ -87,6 +91,8 @@ export default function LyricsView({
   onRetranslate,
   onRetryTranslation,
   onReplay,
+  savedGlossKeys,
+  onSaveGloss,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [focusedIndex, setFocusedIndex] = useState(-1);
@@ -260,6 +266,16 @@ export default function LyricsView({
     node.style.left = `${pos.left}px`;
     node.style.top = `${pos.top}px`;
   }, [gloss]);
+
+  // The loaded gloss, narrowed once so the Save button's click handler
+  // (a callback, where TS narrowing of gloss.state does not survive)
+  // can use it directly. Saved-ness comes from the vocab list the app
+  // loaded, keyed the same way the server dedupes.
+  const glossReady =
+    gloss !== null && gloss.state.status === "ready" ? gloss.state : null;
+  const glossSaved =
+    glossReady !== null &&
+    savedGlossKeys.has(vocabKey(glossReady.entry.word, glossReady.context));
 
   const revealedSet = activeReveals(reveals, trackId);
   const tailIndex =
@@ -671,6 +687,17 @@ export default function LyricsView({
                 {gloss.state.entry.note && (
                   <div className="gloss-note">{gloss.state.entry.note}</div>
                 )}
+                <button
+                  className={glossSaved ? "gloss-save saved" : "gloss-save"}
+                  disabled={glossSaved}
+                  onClick={() => {
+                    if (glossReady) {
+                      onSaveGloss(glossReady.entry, glossReady.context);
+                    }
+                  }}
+                >
+                  {glossSaved ? "Saved" : "Save"}
+                </button>
               </>
             )}
           </div>
