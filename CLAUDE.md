@@ -5,6 +5,7 @@ Context for working on this repo.
 ## What this is
 
 Personal web app: shows time-synced Spanish lyrics for the currently playing Spotify track with a line-aligned English translation, Spotify-style scrolling. Two processes started by one `npm run dev` (concurrently): a Vite + React + TypeScript frontend and a small Express + TypeScript server run with tsx.
+The dev frontend canonicalizes `localhost` to `127.0.0.1` and uses Vite `strictPort` so Spotify OAuth and localStorage stay on the configured origin instead of drifting to an empty token store.
 
 ## Layout
 
