@@ -483,6 +483,12 @@ button.primary:hover {
   pointer-events: none;
 }
 
+/* Tail phase: revealed by a pointer gesture but still mounted as the
+   button while the rest of that gesture plays out; already sharp. */
+.masked-cell .masked-text.revealed {
+  filter: none;
+}
+
 .masked-cell:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -492,7 +498,8 @@ button.primary:hover {
 /* Reveal transition: the just-revealed line sharpens from the mask blur.
    Motion only; reduced-motion users get an instant reveal. */
 @media (prefers-reduced-motion: no-preference) {
-  .cell-text.revealed {
+  .cell-text.revealed,
+  .masked-cell .masked-text.revealed {
     animation: unblur 0.3s ease-out;
   }
 }

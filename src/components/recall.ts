@@ -16,14 +16,42 @@ interface StorageWriter {
   setItem(key: string, value: string): void;
 }
 
-// Off by default; only the exact stored "1" turns the mode on, so an
-// unset or corrupted value never hides translations by surprise.
-export function loadRecallMode(storage: StorageReader): boolean {
-  return storage.getItem(RECALL_STORAGE_KEY) === "1";
+// localStorage can be entirely unavailable (storage disabled, some
+// private modes): even reading window.localStorage throws a
+// SecurityError there, so the default is resolved lazily inside a
+// try/catch rather than at the call site.
+function defaultStorage(): (StorageReader & StorageWriter) | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
 }
 
-export function saveRecallMode(storage: StorageWriter, on: boolean): void {
-  storage.setItem(RECALL_STORAGE_KEY, on ? "1" : "0");
+// Off by default; only the exact stored "1" turns the mode on, so an
+// unset, corrupted, or unreadable value never hides translations by
+// surprise.
+export function loadRecallMode(
+  storage: StorageReader | null = defaultStorage()
+): boolean {
+  try {
+    return storage?.getItem(RECALL_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+// Persistence is best-effort: a write failure only costs the preference
+// surviving a reload, never the session.
+export function saveRecallMode(
+  on: boolean,
+  storage: StorageWriter | null = defaultStorage()
+): void {
+  try {
+    storage?.setItem(RECALL_STORAGE_KEY, on ? "1" : "0");
+  } catch {
+    // Ignored: the mode still toggles for this session.
+  }
 }
 
 // Only a real translation is worth hiding: the loading skeleton, the
@@ -78,26 +106,35 @@ export function isRevealKey(
   return key === "t" && !metaKey && !ctrlKey && !altKey;
 }
 
-// Revealing swaps the masked button for the plain cell mid-gesture, so
-// the second click of a double-click lands on the revealed text. Within
-// one double-click window after a reveal, follow-up gestures on that
-// line (row enlarge, cell edit) are swallowed: the first gesture on a
-// masked cell only ever reveals.
-const REVEAL_GESTURE_WINDOW_MS = 500;
+// State machine for the mask button across a revealing gesture. The
+// first gesture on a masked cell only ever reveals, so the button stays
+// mounted (unblurred) after the reveal and the remaining events of that
+// same gesture (the second click and dblclick of a double-click, which
+// carry the browser's multi-click counter detail >= 2) land on it and
+// are swallowed. A click with detail <= 1 is by definition a fresh
+// gesture: it releases the mask (the plain cell takes over) and passes
+// through so the row enlarges as usual. Gesture membership comes from
+// event.detail, never wall-clock time.
+export type MaskPhase = "masked" | "tail";
 
-export interface RevealMark {
-  index: number;
-  time: number;
+export interface MaskGestureStep {
+  action: "reveal" | "swallow" | "pass";
+  phase: MaskPhase | "released";
 }
 
-export function suppressAfterReveal(
-  lastReveal: RevealMark | null,
-  index: number,
-  time: number
-): boolean {
-  return (
-    lastReveal !== null &&
-    lastReveal.index === index &&
-    time - lastReveal.time < REVEAL_GESTURE_WINDOW_MS
-  );
+export function maskGesture(
+  phase: MaskPhase,
+  type: "click" | "dblclick",
+  detail: number
+): MaskGestureStep {
+  if (phase === "masked") {
+    // A dblclick cannot arrive first (its click precedes it); swallowed
+    // defensively so it can never reach the row.
+    if (type === "dblclick") return { action: "swallow", phase: "masked" };
+    return { action: "reveal", phase: "tail" };
+  }
+  if (type === "dblclick") return { action: "swallow", phase: "released" };
+  return detail >= 2
+    ? { action: "swallow", phase: "tail" }
+    : { action: "pass", phase: "released" };
 }

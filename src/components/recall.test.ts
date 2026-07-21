@@ -5,9 +5,9 @@ import {
   enCellMasked,
   isRevealKey,
   loadRecallMode,
+  maskGesture,
   nextReveals,
   saveRecallMode,
-  suppressAfterReveal,
 } from "./recall";
 
 function fakeStorage(initial: Record<string, string> = {}) {
@@ -20,6 +20,15 @@ function fakeStorage(initial: Record<string, string> = {}) {
   };
 }
 
+const throwingStorage = {
+  getItem: (): string | null => {
+    throw new Error("storage disabled");
+  },
+  setItem: (): void => {
+    throw new Error("storage disabled");
+  },
+};
+
 describe("recall mode persistence", () => {
   it("defaults to off when nothing is stored", () => {
     expect(loadRecallMode(fakeStorage())).toBe(false);
@@ -27,14 +36,14 @@ describe("recall mode persistence", () => {
 
   it("round-trips on through storage", () => {
     const storage = fakeStorage();
-    saveRecallMode(storage, true);
+    saveRecallMode(true, storage);
     expect(loadRecallMode(storage)).toBe(true);
   });
 
   it("round-trips off through storage", () => {
     const storage = fakeStorage();
-    saveRecallMode(storage, true);
-    saveRecallMode(storage, false);
+    saveRecallMode(true, storage);
+    saveRecallMode(false, storage);
     expect(loadRecallMode(storage)).toBe(false);
   });
 
@@ -42,6 +51,19 @@ describe("recall mode persistence", () => {
     expect(
       loadRecallMode(fakeStorage({ [RECALL_STORAGE_KEY]: "banana" }))
     ).toBe(false);
+  });
+
+  it("falls back to off when the storage read throws", () => {
+    expect(loadRecallMode(throwingStorage)).toBe(false);
+  });
+
+  it("silently ignores a storage write that throws", () => {
+    expect(() => saveRecallMode(true, throwingStorage)).not.toThrow();
+  });
+
+  it("treats an unavailable storage as off", () => {
+    expect(loadRecallMode(null)).toBe(false);
+    expect(() => saveRecallMode(true, null)).not.toThrow();
   });
 });
 
@@ -112,20 +134,49 @@ describe("isRevealKey", () => {
   });
 });
 
-describe("suppressAfterReveal", () => {
-  it("suppresses a follow-up gesture on the just-revealed line", () => {
-    expect(suppressAfterReveal({ index: 3, time: 1000 }, 3, 1200)).toBe(true);
+// Gesture membership is decided by event.detail (the browser's own
+// multi-click counter), never by wall-clock time: a click with detail 1
+// is always a fresh gesture, no matter how soon it arrives.
+describe("maskGesture", () => {
+  it("reveal click alone: first click reveals, is swallowed, and arms the tail", () => {
+    expect(maskGesture("masked", "click", 1)).toEqual({
+      action: "reveal",
+      phase: "tail",
+    });
   });
 
-  it("does not suppress after the double-click window passes", () => {
-    expect(suppressAfterReveal({ index: 3, time: 1000 }, 3, 1700)).toBe(false);
+  it("keyboard activation (detail 0) reveals the same way", () => {
+    expect(maskGesture("masked", "click", 0)).toEqual({
+      action: "reveal",
+      phase: "tail",
+    });
   });
 
-  it("does not suppress gestures on other lines", () => {
-    expect(suppressAfterReveal({ index: 3, time: 1000 }, 4, 1200)).toBe(false);
+  it("double-click reveal: the second click of the revealing gesture is swallowed", () => {
+    expect(maskGesture("tail", "click", 2)).toEqual({
+      action: "swallow",
+      phase: "tail",
+    });
   });
 
-  it("does not suppress when nothing was revealed", () => {
-    expect(suppressAfterReveal(null, 3, 1200)).toBe(false);
+  it("double-click reveal: the dblclick tail is swallowed and ends the gesture, so no editor opens", () => {
+    expect(maskGesture("tail", "dblclick", 2)).toEqual({
+      action: "swallow",
+      phase: "released",
+    });
+  });
+
+  it("a later deliberate click (a fresh gesture, detail 1) passes through to enlarge and releases the mask", () => {
+    expect(maskGesture("tail", "click", 1)).toEqual({
+      action: "pass",
+      phase: "released",
+    });
+  });
+
+  it("a dblclick while still masked is swallowed defensively", () => {
+    expect(maskGesture("masked", "dblclick", 2)).toEqual({
+      action: "swallow",
+      phase: "masked",
+    });
   });
 });

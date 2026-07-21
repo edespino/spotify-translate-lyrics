@@ -16,11 +16,10 @@ import {
   enCellMasked,
   isRevealKey,
   loadRecallMode,
+  maskGesture,
   nextReveals,
   saveRecallMode,
-  suppressAfterReveal,
-  type RevealMark,
-  type Reveals,
+  type MaskPhase,
 } from "./recall";
 
 type Field = "es" | "en";
@@ -81,24 +80,34 @@ export default function LyricsView({
   // Active-recall mode: hide English translations until the listener
   // reveals a line. The mode itself persists in localStorage; reveals
   // are per track (activeReveals reads as empty once trackId changes).
-  const [recallOn, setRecallOn] = useState(() => loadRecallMode(localStorage));
-  const [reveals, setReveals] = useState<Reveals | null>(null);
-  // Set when a masked cell is revealed, so the tail of that same gesture
-  // (the row click, the second click of a double-click) never enlarges
-  // the row or opens the editor.
-  const lastReveal = useRef<RevealMark | null>(null);
+  // tail is the line whose mask button is still mounted after a pointer
+  // reveal, swallowing the rest of that same gesture; it lives inside
+  // the reveals object so a track change clears it with the reveals.
+  const [recallOn, setRecallOn] = useState(() => loadRecallMode());
+  const [reveals, setReveals] = useState<{
+    trackId: string;
+    indices: ReadonlySet<number>;
+    tail: number | null;
+  } | null>(null);
 
   const revealedSet = activeReveals(reveals, trackId);
+  const tailIndex =
+    reveals && reveals.trackId === trackId ? reveals.tail : null;
 
-  const revealLine = (i: number) => {
-    lastReveal.current = { index: i, time: performance.now() };
-    setReveals({ trackId, indices: nextReveals(revealedSet, i) });
-  };
+  const revealLine = (i: number, viaPointer: boolean) =>
+    setReveals({
+      trackId,
+      indices: nextReveals(revealedSet, i),
+      tail: viaPointer ? i : null,
+    });
+
+  const releaseTail = () =>
+    setReveals((r) => (r && r.tail !== null ? { ...r, tail: null } : r));
 
   const toggleRecall = () => {
     const next = !recallOn;
     setRecallOn(next);
-    saveRecallMode(localStorage, next);
+    saveRecallMode(next);
     // Toggling off and on starts a fresh recall pass over the track.
     setReveals(null);
   };
@@ -201,7 +210,7 @@ export default function LyricsView({
       if (isTypingTarget(target?.tagName, target?.isContentEditable ?? false))
         return;
       e.preventDefault();
-      revealLine(activeIndex);
+      revealLine(activeIndex, false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -291,44 +300,53 @@ export default function LyricsView({
       );
     }
     const state = field === "en" ? enCellState(row.en, translation.status) : "text";
-    if (
+    const masked =
+      field === "en" && enCellMasked(recallOn, state, revealedSet.has(i), row.en);
+    const tail =
       field === "en" &&
-      enCellMasked(recallOn, state, revealedSet.has(i), row.en)
-    ) {
+      recallOn &&
+      state === "text" &&
+      tailIndex === i &&
+      revealedSet.has(i);
+    if (masked || tail) {
       // The mask is a button: focusable, Enter/Space reveal for free, and
-      // its own click target (stopPropagation) so clicking the masked
-      // cell only reveals and never enlarges the row. The blurred text
-      // keeps the cell's natural height so column alignment and
-      // scrolling are untouched.
+      // its own click target so clicking the masked cell only reveals and
+      // never enlarges the row. The blurred text keeps the cell's natural
+      // height so column alignment and scrolling are untouched. After a
+      // pointer reveal the button stays mounted (unblurred, the tail
+      // phase) so the rest of that same gesture is swallowed by
+      // maskGesture; a fresh click passes through to enlarge and swaps in
+      // the plain cell, as do leaving or blurring the button.
+      const phase: MaskPhase = masked ? "masked" : "tail";
+      const step = (
+        e: { stopPropagation(): void; detail: number },
+        type: "click" | "dblclick"
+      ) => {
+        const s = maskGesture(phase, type, e.detail);
+        if (s.action !== "pass") e.stopPropagation();
+        if (s.action === "reveal") revealLine(i, true);
+        else if (s.phase === "released") releaseTail();
+      };
       return (
         <button
-          className="masked-cell"
-          aria-label="translation hidden, click to reveal"
-          onClick={(e) => {
-            e.stopPropagation();
-            revealLine(i);
-          }}
-          onDoubleClick={(e) => e.stopPropagation()}
+          className={masked ? "masked-cell" : "masked-cell revealed"}
+          aria-label={
+            masked ? "translation hidden, click to reveal" : undefined
+          }
+          onClick={(e) => step(e, "click")}
+          onDoubleClick={(e) => step(e, "dblclick")}
+          onMouseLeave={masked ? undefined : releaseTail}
+          onBlur={masked ? undefined : releaseTail}
         >
-          <span className="masked-text" aria-hidden="true">
+          <span
+            className={masked ? "masked-text" : "masked-text revealed"}
+            aria-hidden={masked ? "true" : undefined}
+          >
             {row.en}
           </span>
         </button>
       );
     }
-    // Right after a reveal, the tail of that gesture lands here: swallow
-    // the row-enlarge click and the editor double-click once.
-    const revealedNow =
-      (handler?: () => void) => (e: { stopPropagation(): void }) => {
-        if (
-          field === "en" &&
-          suppressAfterReveal(lastReveal.current, i, performance.now())
-        ) {
-          e.stopPropagation();
-          return;
-        }
-        handler?.();
-      };
     return (
       <span
         className={
@@ -336,8 +354,7 @@ export default function LyricsView({
             ? "cell-text revealed"
             : "cell-text"
         }
-        onClick={revealedNow()}
-        onDoubleClick={revealedNow(() => startEdit(i, field))}
+        onDoubleClick={() => startEdit(i, field)}
       >
         {state === "pending" ? (
           <span className="skeleton" style={{ width: skeletonWidth(i) }} />
