@@ -284,6 +284,39 @@ describe.sequential("translation server", () => {
     expect(provider.translate).toHaveBeenCalledTimes(1);
   });
 
+  it("returns cached lyrics promptly when title backfill is slow", async () => {
+    const provider = providerWith(
+      async () => new Promise<string[]>(() => {})
+    );
+    const app = createApp(provider, dir);
+    mkdirSync(path.join(dir, "translations"), { recursive: true });
+    writeFileSync(
+      path.join(dir, "translations", "abc123.json"),
+      JSON.stringify({
+        trackId: "abc123",
+        title: "Cancion",
+        artist: "Artista",
+        lines: [{ timeMs: 0, es: "hola", en: "old hello" }],
+      })
+    );
+
+    const startedAt = Date.now();
+    const [firstRes, secondRes] = await Promise.all([
+      request(app).post("/api/translate").send(body),
+      request(app).get("/api/translations/abc123"),
+    ]);
+    const elapsedMs = Date.now() - startedAt;
+
+    expect(firstRes.status).toBe(200);
+    expect(secondRes.status).toBe(200);
+    expect(elapsedMs).toBeLessThan(2200);
+    expect(firstRes.body.titleEn).toBeUndefined();
+    expect(secondRes.body.titleEn).toBeUndefined();
+    expect(firstRes.body.lines[0].en).toBe("old hello");
+    expect(secondRes.body.lines[0].en).toBe("old hello");
+    expect(provider.translate).toHaveBeenCalledTimes(1);
+  });
+
   it("returns cached lyrics when title backfill fails and leaves titleEn absent", async () => {
     const provider = providerWith(async () => {
       throw new Error("provider down");

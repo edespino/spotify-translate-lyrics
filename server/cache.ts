@@ -66,8 +66,13 @@ export class TranslationCache {
     await fs.mkdir(this.dir, { recursive: true });
     const file = this.filePath(entry.trackId);
     const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
-    await fs.writeFile(tmp, JSON.stringify(entry, null, 2), "utf8");
-    await fs.rename(tmp, file);
+    try {
+      await fs.writeFile(tmp, JSON.stringify(entry, null, 2), "utf8");
+      await fs.rename(tmp, file);
+    } catch (err) {
+      await fs.unlink(tmp).catch(() => {});
+      throw err;
+    }
   }
 
   async setTitleEn(

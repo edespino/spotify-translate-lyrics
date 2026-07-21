@@ -7,6 +7,8 @@ import {
 } from "./translator";
 import type { TranslationEntry, TranslationProvider } from "./types";
 
+const TITLE_BACKFILL_RESPONSE_TIMEOUT_MS = 1500;
+
 export function createApp(provider: TranslationProvider, dataDir: string) {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
@@ -55,11 +57,22 @@ export function createApp(provider: TranslationProvider, dataDir: string) {
     }
   }
 
+  async function backfillTitleEnForResponse(
+    entry: TranslationEntry
+  ): Promise<TranslationEntry> {
+    return Promise.race([
+      backfillTitleEn(entry),
+      new Promise<TranslationEntry>((resolve) => {
+        setTimeout(() => resolve(entry), TITLE_BACKFILL_RESPONSE_TIMEOUT_MS);
+      }),
+    ]);
+  }
+
   app.get("/api/translations/:trackId", async (req, res) => {
     try {
       const entry = await cache.read(req.params.trackId);
       if (!entry) return res.status(404).json({ error: "Not cached" });
-      res.json(await backfillTitleEn(entry));
+      res.json(await backfillTitleEnForResponse(entry));
     } catch {
       res.status(400).json({ error: "Bad track id" });
     }
@@ -76,7 +89,7 @@ export function createApp(provider: TranslationProvider, dataDir: string) {
     }
     try {
       const cached = await cache.read(trackId);
-      if (cached) return res.json(await backfillTitleEn(cached));
+      if (cached) return res.json(await backfillTitleEnForResponse(cached));
 
       let pending = inFlight.get(trackId);
       if (!pending) {
