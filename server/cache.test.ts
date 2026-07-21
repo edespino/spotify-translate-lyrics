@@ -83,15 +83,16 @@ describe("TranslationCache", () => {
   });
 
   it("cleans up temp files after a failed write", async () => {
-    const realWriteFile = fs.writeFile.bind(fs);
-    const writeFile = vi.spyOn(fs, "writeFile").mockImplementation(
+    const realRename = fs.rename.bind(fs);
+    const rename = vi.spyOn(fs, "rename").mockImplementation(
       async (
-        file: Parameters<typeof fs.writeFile>[0],
-        data: Parameters<typeof fs.writeFile>[1],
-        options?: Parameters<typeof fs.writeFile>[2]
+        oldPath: Parameters<typeof fs.rename>[0],
+        newPath: Parameters<typeof fs.rename>[1]
       ) => {
-        await realWriteFile(file, data, options);
-        throw new Error("disk full");
+        if (String(oldPath).startsWith(path.join(dir, "translations"))) {
+          throw new Error("disk full");
+        }
+        return realRename(oldPath, newPath);
       }
     );
 
@@ -99,7 +100,7 @@ describe("TranslationCache", () => {
       await expect(cache.write(entry())).rejects.toThrow("disk full");
       expect(await fs.readdir(path.join(dir, "translations"))).toEqual([]);
     } finally {
-      writeFile.mockRestore();
+      rename.mockRestore();
     }
   });
 
