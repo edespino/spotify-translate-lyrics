@@ -8,19 +8,21 @@ import {
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "./app";
 import { glossCacheKey } from "./cache";
+import { createTestRequest } from "./testRequest";
 import type { GlossEntry, TranslationProvider } from "./types";
 
 let dir: string;
+const { closeServers, request } = createTestRequest();
 
 beforeEach(() => {
   dir = mkdtempSync(path.join(tmpdir(), "app-test-"));
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await closeServers();
   rmSync(dir, { recursive: true, force: true });
 });
 
