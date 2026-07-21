@@ -14,9 +14,11 @@ export interface LyricLine {
   text: string;
 }
 
+// lrclibId is the LRCLIB numeric id of the entry the lyrics came from,
+// kept so a wrong entry can be flagged to LRCLIB later.
 export type LyricsResult =
-  | { kind: "synced"; lines: LyricLine[] }
-  | { kind: "plain"; lines: string[] }
+  | { kind: "synced"; lines: LyricLine[]; lrclibId?: number }
+  | { kind: "plain"; lines: string[]; lrclibId?: number }
   | { kind: "instrumental" }
   | { kind: "none" };
 
@@ -34,7 +36,21 @@ export interface TranslationEntry {
   artist: string;
   // Absent in cache entries written before title translation existed.
   titleEn?: string;
+  // LRCLIB numeric id, absent in cache entries written before it was
+  // captured.
+  lrclibId?: number;
   lines: TranslationLine[];
+}
+
+// One track whose LRCLIB lyrics were marked wrong, as stored by the
+// server. While a record exists the app suppresses the track's lyrics
+// and makes no LRCLIB or translation calls for it.
+export interface MarkedTrack {
+  trackId: string;
+  title: string;
+  artist: string;
+  markedAt: string;
+  lrclibId?: number;
 }
 
 // One saved vocabulary word, as stored by the server. The id is the

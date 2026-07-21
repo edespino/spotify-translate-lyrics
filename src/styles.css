@@ -261,12 +261,13 @@ button.primary:hover {
   font-weight: 400;
 }
 
-/* Active-recall mode toggle, same pill chrome as the badges. The Vocab
-   and Settings pills in the header share the exact same visual
-   language. */
+/* Active-recall mode toggle, same pill chrome as the badges. The Vocab,
+   Settings, and Mark wrong pills in the header share the exact same
+   visual language. */
 .recall-toggle,
 .vocab-toggle,
-.settings-toggle {
+.settings-toggle,
+.mark-wrong-toggle {
   background: none;
   border: 1px solid #333;
   color: var(--text-dim);
@@ -281,7 +282,8 @@ button.primary:hover {
 
 .recall-toggle:hover,
 .vocab-toggle:hover,
-.settings-toggle:hover {
+.settings-toggle:hover,
+.mark-wrong-toggle:hover {
   border-color: var(--text-dim);
   color: var(--text);
 }
@@ -295,8 +297,38 @@ button.primary:hover {
 
 .recall-toggle:focus-visible,
 .vocab-toggle:focus-visible,
-.settings-toggle:focus-visible {
+.settings-toggle:focus-visible,
+.mark-wrong-toggle:focus-visible {
   outline: 2px solid var(--accent);
+}
+
+/* Actions on the marked-wrong screen: Reset reuses the retry pill,
+   Report is a quieter neutral pill that dims when unavailable. */
+.empty-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.report-button {
+  background: none;
+  border: 1px solid #555;
+  color: var(--text-dim);
+  border-radius: 14px;
+  padding: 5px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.report-button:hover:not(:disabled) {
+  border-color: var(--text-dim);
+  color: var(--text);
+}
+
+.report-button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .lyrics-scroll {

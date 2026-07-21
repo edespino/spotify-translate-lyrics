@@ -1,4 +1,9 @@
-import type { TranslationEntry, VocabEntry, VocabInput } from "./types";
+import type {
+  MarkedTrack,
+  TranslationEntry,
+  VocabEntry,
+  VocabInput,
+} from "./types";
 
 // Client for the local translation server. All calls go through the
 // Vite dev proxy at /api.
@@ -17,12 +22,13 @@ export async function requestTranslation(
   title: string,
   artist: string,
   lines: string[],
-  timesMs: number[]
+  timesMs: number[],
+  lrclibId?: number
 ): Promise<TranslationEntry> {
   const res = await fetch("/api/translate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ trackId, title, artist, lines, timesMs }),
+    body: JSON.stringify({ trackId, title, artist, lines, timesMs, lrclibId }),
   });
   if (!res.ok) throw new Error(`Server error ${res.status}`);
   return res.json();
@@ -78,6 +84,52 @@ export async function saveVocab(
 export async function deleteVocab(id: string): Promise<void> {
   const res = await fetch(`/api/vocab/${encodeURIComponent(id)}`, {
     method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`Server error ${res.status}`);
+}
+
+// Wrong-lyrics marks: the server suppresses a marked track's lyrics
+// and deletes its cached translation, so a reset re-fetches and
+// re-translates fresh.
+export interface MarkWrongInput {
+  trackId: string;
+  title: string;
+  artist: string;
+  lrclibId?: number;
+}
+
+export async function listMarks(): Promise<MarkedTrack[]> {
+  const res = await fetch("/api/marks");
+  if (!res.ok) throw new Error(`Server error ${res.status}`);
+  return res.json();
+}
+
+export async function markLyrics(
+  input: MarkWrongInput
+): Promise<MarkedTrack> {
+  const res = await fetch("/api/mark", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error(`Server error ${res.status}`);
+  return res.json();
+}
+
+export async function resetMark(trackId: string): Promise<void> {
+  const res = await fetch("/api/mark/reset", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ trackId }),
+  });
+  if (!res.ok) throw new Error(`Server error ${res.status}`);
+}
+
+export async function reportMark(trackId: string): Promise<void> {
+  const res = await fetch("/api/mark/report", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ trackId }),
   });
   if (!res.ok) throw new Error(`Server error ${res.status}`);
 }

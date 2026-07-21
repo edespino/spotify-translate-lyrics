@@ -13,7 +13,22 @@ export interface TranslationEntry {
   // English translation of the title. Absent in cache files written
   // before title translation existed; those render without one.
   titleEn?: string;
+  // LRCLIB numeric id of the entry the lyrics came from. Absent in
+  // cache files written before it was captured.
+  lrclibId?: number;
   lines: TranslationLine[];
+}
+
+// One track whose LRCLIB lyrics the user marked wrong. While a record
+// exists the app suppresses the track's lyrics entirely. lrclibId is
+// kept so the entry can be flagged to LRCLIB; absent when the mark was
+// made without one.
+export interface MarkedTrack {
+  trackId: string;
+  title: string;
+  artist: string;
+  markedAt: string;
+  lrclibId?: number;
 }
 
 export interface GlossEntry {

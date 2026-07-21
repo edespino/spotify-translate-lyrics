@@ -2,6 +2,7 @@ import { parseLrc } from "./lrc";
 import type { LyricsResult } from "./types";
 
 interface LrclibResponse {
+  id?: number;
   instrumental?: boolean;
   syncedLyrics?: string | null;
   plainLyrics?: string | null;
@@ -24,17 +25,18 @@ export async function fetchLyrics(
   if (res.status === 404) return { kind: "none" };
   if (!res.ok) throw new Error(`LRCLIB error ${res.status}`);
   const data = (await res.json()) as LrclibResponse;
+  const lrclibId = typeof data.id === "number" ? data.id : undefined;
   if (data.instrumental) return { kind: "instrumental" };
   if (data.syncedLyrics) {
     const lines = parseLrc(data.syncedLyrics);
-    if (lines.length > 0) return { kind: "synced", lines };
+    if (lines.length > 0) return { kind: "synced", lines, lrclibId };
   }
   if (data.plainLyrics) {
     const lines = data.plainLyrics
       .split(/\r?\n/)
       .map((l) => l.trim())
       .filter((l, i, arr) => l.length > 0 || (i > 0 && i < arr.length - 1));
-    if (lines.length > 0) return { kind: "plain", lines };
+    if (lines.length > 0) return { kind: "plain", lines, lrclibId };
   }
   return { kind: "none" };
 }

@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   deleteVocab,
+  listMarks,
   listVocab,
+  markLyrics,
+  reportMark,
+  resetMark,
   resetOverride,
   retranslate,
   saveOverride,
@@ -12,6 +16,14 @@ import { fetchTranslationIfNeeded } from "./translation";
 import { fetchLyrics } from "./lyrics";
 import EmptyState from "./components/EmptyState";
 import { lyricsEmptyState } from "./components/stateScreen";
+import {
+  canMarkWrong,
+  MARKED_MESSAGE,
+  markRequest,
+  reportSpec,
+  toMarkMap,
+  type ReportState,
+} from "./components/markedLyrics";
 import LyricsView from "./components/LyricsView";
 import NowPlaying from "./components/NowPlaying";
 import SettingsPanel from "./components/SettingsPanel";
@@ -42,6 +54,7 @@ import {
 import { PositionTracker, findActiveLine } from "./sync";
 import type {
   LyricsResult,
+  MarkedTrack,
   PlaybackState,
   TranslationEntry,
   VocabEntry,
@@ -92,6 +105,15 @@ export default function App() {
   const [vocab, setVocab] = useState<VocabEntry[]>([]);
   const [vocabOpen, setVocabOpen] = useState(false);
 
+  // Wrong-lyrics marks: fetched once per app load, then kept in sync
+  // from mark/reset responses, so a marked track costs zero network
+  // beyond Spotify polling. The ref mirrors the state for the
+  // track-change effect, which must not re-run when marks change.
+  const [marks, setMarks] = useState<Map<string, MarkedTrack>>(new Map());
+  const marksRef = useRef(marks);
+  marksRef.current = marks;
+  const [reportState, setReportState] = useState<ReportState>("idle");
+
   // Appearance settings: applied immediately, persisted best-effort.
   // The two slide-overs share the right edge, so opening one closes the
   // other.
@@ -109,6 +131,11 @@ export default function App() {
     listVocab()
       .then((entries) => {
         if (!cancelled) setVocab(entries);
+      })
+      .catch(() => {});
+    listMarks()
+      .then((records) => {
+        if (!cancelled) setMarks(toMarkMap(records));
       })
       .catch(() => {});
     return () => {
@@ -300,21 +327,33 @@ export default function App() {
     [loadTranslation]
   );
 
-  // Load lyrics and translation when the track changes.
+  // Load lyrics and translation when the track changes. A marked track
+  // skips the LRCLIB fetch (and therefore translation) entirely.
   useEffect(() => {
     const trackId = playback?.trackId ?? null;
     if (trackId === trackIdRef.current) return;
     trackIdRef.current = trackId;
     setActiveIndex(-1);
     setTranslation({ status: "idle" });
+    setReportState("idle");
     clearTimeout(noticeTimer.current);
     setNotice(null);
-    if (!playback || !trackId) {
+    if (!playback || !trackId || marksRef.current.has(trackId)) {
       setLyrics({ status: "idle" });
       return;
     }
     loadLyrics(playback);
   }, [playback, loadLyrics]);
+
+  // Covers the two paths the track-change effect cannot: the current
+  // track just got marked, and the marks list arriving after the first
+  // track already started loading. Either way the lyrics are dropped so
+  // no marked content renders.
+  useEffect(() => {
+    if (!playback || !marks.has(playback.trackId)) return;
+    if (lyrics.status !== "idle") setLyrics({ status: "idle" });
+    setTranslation((t) => (t.status === "idle" ? t : { status: "idle" }));
+  }, [marks, playback, lyrics]);
 
   // Recompute the active line every animation frame while synced
   // lyrics are showing.
@@ -364,6 +403,52 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [syncedLines, activeIndex, replayLine]);
 
+  // Mark the current track's lyrics wrong: the server records it and
+  // deletes the cached translation, the marks map flips the lyrics area
+  // to the marked screen.
+  const markWrong = useCallback(async () => {
+    if (!playback || lyrics.status !== "ready") return;
+    try {
+      const record = await markLyrics(markRequest(playback, lyrics.result));
+      setMarks((prev) => new Map(prev).set(record.trackId, record));
+    } catch {
+      showNotice("Could not mark the lyrics");
+    }
+  }, [playback, lyrics, showNotice]);
+
+  // Reset re-enters the normal flow: the cache was deleted at mark
+  // time, so this re-fetches from LRCLIB and re-translates once.
+  const resetWrongMark = useCallback(async () => {
+    if (!playback) return;
+    try {
+      await resetMark(playback.trackId);
+      setMarks((prev) => {
+        const next = new Map(prev);
+        next.delete(playback.trackId);
+        return next;
+      });
+      setReportState("idle");
+      loadLyrics(playback);
+    } catch {
+      showNotice("Could not reset the mark");
+    }
+  }, [playback, loadLyrics, showNotice]);
+
+  // One-shot community flag; the server does the LRCLIB challenge and
+  // proof of work. Success or failure surfaces as a brief notice.
+  const reportWrongLyrics = useCallback(async () => {
+    if (!playback) return;
+    setReportState("pending");
+    try {
+      await reportMark(playback.trackId);
+      setReportState("sent");
+      showNotice("Reported to LRCLIB");
+    } catch {
+      setReportState("idle");
+      showNotice("Could not report to LRCLIB");
+    }
+  }, [playback, showNotice]);
+
   const withEntry = (promise: Promise<TranslationEntry>) =>
     promise
       .then((entry) => setTranslation({ status: "ready", entry }))
@@ -398,6 +483,8 @@ export default function App() {
   }
 
   const empty = lyricsEmptyState(lyrics);
+  const markedRecord = marks.get(playback.trackId);
+  const report = markedRecord ? reportSpec(markedRecord, reportState) : null;
 
   return (
     <div className="app">
@@ -405,6 +492,8 @@ export default function App() {
         playback={playback}
         lyrics={lyrics}
         translation={translation}
+        canMarkWrong={!markedRecord && canMarkWrong(lyrics)}
+        onMarkWrong={markWrong}
         rateLimited={rateLimited}
         vocabOpen={vocabOpen}
         onToggleVocab={() => {
@@ -418,7 +507,29 @@ export default function App() {
         }}
       />
       <main className="content">
-        {empty && (
+        {markedRecord && report && (
+          <EmptyState
+            artUrl={playback.albumArtUrl || undefined}
+            title={playback.title}
+            message={MARKED_MESSAGE}
+            action={
+              <div className="empty-actions">
+                <button className="retry-button" onClick={resetWrongMark}>
+                  Reset
+                </button>
+                <button
+                  className="report-button"
+                  disabled={!report.enabled}
+                  title={report.title}
+                  onClick={reportWrongLyrics}
+                >
+                  {report.label}
+                </button>
+              </div>
+            }
+          />
+        )}
+        {!markedRecord && empty && (
           <EmptyState
             artUrl={playback.albumArtUrl || undefined}
             title={playback.title}
@@ -435,7 +546,8 @@ export default function App() {
             }
           />
         )}
-        {lyrics.status === "ready" &&
+        {!markedRecord &&
+          lyrics.status === "ready" &&
           (lyrics.result.kind === "synced" || lyrics.result.kind === "plain") && (
             <LyricsView
               lyrics={lyrics.result}
