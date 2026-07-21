@@ -53,6 +53,38 @@ export function reportSpec(
   };
 }
 
+// Gate for the lyric-loading effect: nothing loads for ANY track until
+// the marks list has resolved (otherwise a marked track playing at boot
+// would hit LRCLIB before the marks arrive), marked tracks never load,
+// and a track already kicked off does not load twice. When the marks
+// fetch fails the caller flags ready anyway and proceeds as unmarked:
+// availability over suppression.
+export function shouldLoadLyrics(
+  trackId: string | null,
+  marksReady: boolean,
+  marks: Map<string, MarkedTrack>,
+  loadedTrackId: string | null
+): boolean {
+  if (!trackId || !marksReady) return false;
+  if (marks.has(trackId)) return false;
+  return loadedTrackId !== trackId;
+}
+
+// Local stand-in when the server answers that a track is marked but the
+// client's marks map does not have it (stale after a 409 from
+// /api/translate): enough to suppress the lyrics immediately; the real
+// record (with lrclibId) is refreshed from GET /api/marks best-effort.
+export function markedFallbackRecord(
+  playback: Pick<PlaybackState, "trackId" | "title" | "artist">
+): MarkedTrack {
+  return {
+    trackId: playback.trackId,
+    title: playback.title,
+    artist: playback.artist,
+    markedAt: new Date().toISOString(),
+  };
+}
+
 export function toMarkMap(
   records: MarkedTrack[]
 ): Map<string, MarkedTrack> {

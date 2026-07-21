@@ -179,6 +179,46 @@ describe.sequential("wrong-lyrics marks", () => {
     ).toBe(400);
   });
 
+  it("marking during an in-flight translate does not resurrect the cache", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let calls = 0;
+    const provider = providerWith(async (lines) => {
+      // Only the first (pre-mark) translation waits on the gate.
+      if (++calls === 1) await gate;
+      return lines.map((l) => `EN:${l}`);
+    });
+    const app = createApp(provider, dir);
+
+    const pending = request(app)
+      .post("/api/translate")
+      .send(body)
+      .then((r) => r);
+    await vi.waitFor(() => expect(provider.translate).toHaveBeenCalled());
+
+    const marked = await request(app)
+      .post("/api/mark")
+      .send({ trackId: "abc123", lrclibId: 4242 });
+    expect(marked.status).toBe(200);
+
+    release();
+    const res = await pending;
+    // The client that asked still gets its translation; it is just
+    // never persisted.
+    expect(res.status).toBe(200);
+    expect(res.body.lines[0].en).toBe("EN:hola");
+
+    const cacheFile = path.join(dir, "translations", "abc123.json");
+    expect(existsSync(cacheFile)).toBe(false);
+
+    // After reset, nothing stale is served: translate is a fresh
+    // provider call.
+    await request(app).post("/api/mark/reset").send({ trackId: "abc123" });
+    const fresh = await request(app).post("/api/translate").send(body);
+    expect(fresh.status).toBe(200);
+    expect(provider.translate).toHaveBeenCalledTimes(2);
+  });
+
   it("report solves the challenge and flags the LRCLIB entry once", async () => {
     const lrclib = await startLrclibMock({});
     try {

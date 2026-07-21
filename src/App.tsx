@@ -10,6 +10,7 @@ import {
   retranslate,
   saveOverride,
   saveVocab,
+  TrackMarkedError,
 } from "./api";
 import { isEnglishLyrics, lyricsPlainText, shouldTranslate } from "./detect";
 import { fetchTranslationIfNeeded } from "./translation";
@@ -19,8 +20,10 @@ import { lyricsEmptyState } from "./components/stateScreen";
 import {
   canMarkWrong,
   MARKED_MESSAGE,
+  markedFallbackRecord,
   markRequest,
   reportSpec,
+  shouldLoadLyrics,
   toMarkMap,
   type ReportState,
 } from "./components/markedLyrics";
@@ -85,6 +88,10 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const tracker = useRef(new PositionTracker());
   const trackIdRef = useRef<string | null>(null);
+  // The track whose lyrics load was actually kicked off, distinct from
+  // trackIdRef: a marked track (or one waiting on marksReady) is the
+  // current track without ever loading.
+  const loadedTrackRef = useRef<string | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined
   );
@@ -107,9 +114,13 @@ export default function App() {
 
   // Wrong-lyrics marks: fetched once per app load, then kept in sync
   // from mark/reset responses, so a marked track costs zero network
-  // beyond Spotify polling. The ref mirrors the state for the
-  // track-change effect, which must not re-run when marks change.
+  // beyond Spotify polling. Lyric loading waits for marksReady so a
+  // marked track playing at boot never hits LRCLIB; if the marks fetch
+  // fails the app proceeds as unmarked (availability over suppression).
+  // The ref mirrors the state for the lyric-loading effect, which must
+  // not re-run when marks change.
   const [marks, setMarks] = useState<Map<string, MarkedTrack>>(new Map());
+  const [marksReady, setMarksReady] = useState(false);
   const marksRef = useRef(marks);
   marksRef.current = marks;
   const [reportState, setReportState] = useState<ReportState>("idle");
@@ -137,7 +148,10 @@ export default function App() {
       .then((records) => {
         if (!cancelled) setMarks(toMarkMap(records));
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setMarksReady(true);
+      });
     return () => {
       cancelled = true;
     };
@@ -298,6 +312,22 @@ export default function App() {
         setTranslation({ status: "ready", entry });
       } catch (err) {
         if (trackIdRef.current !== track.trackId) return;
+        if (err instanceof TrackMarkedError) {
+          // The server says this track is marked and the client's map
+          // was stale: suppress the lyrics instead of showing an error.
+          // A local fallback record flips the screen immediately; the
+          // real record (with lrclibId) refreshes best-effort.
+          setTranslation({ status: "idle" });
+          setMarks((prev) =>
+            prev.has(track.trackId)
+              ? prev
+              : new Map(prev).set(track.trackId, markedFallbackRecord(track))
+          );
+          listMarks()
+            .then((records) => setMarks(toMarkMap(records)))
+            .catch(() => {});
+          return;
+        }
         setTranslation({
           status: "error",
           message: err instanceof Error ? err.message : "Translation failed",
@@ -312,6 +342,7 @@ export default function App() {
   // a track change.
   const loadLyrics = useCallback(
     (track: PlaybackState) => {
+      loadedTrackRef.current = track.trackId;
       setLyrics({ status: "loading" });
       fetchLyrics(track.title, track.artist, track.album, track.durationMs)
         .then((result) => {
@@ -327,23 +358,35 @@ export default function App() {
     [loadTranslation]
   );
 
-  // Load lyrics and translation when the track changes. A marked track
-  // skips the LRCLIB fetch (and therefore translation) entirely.
+  // Reset per-track state when the track changes, then load lyrics once
+  // shouldLoadLyrics allows it: never before the marks list resolves,
+  // never for a marked track, never twice for the same track
+  // (loadedTrackRef, stamped inside loadLyrics, absorbs both the 3s
+  // poll re-renders and the marksReady flip).
   useEffect(() => {
     const trackId = playback?.trackId ?? null;
-    if (trackId === trackIdRef.current) return;
-    trackIdRef.current = trackId;
-    setActiveIndex(-1);
-    setTranslation({ status: "idle" });
-    setReportState("idle");
-    clearTimeout(noticeTimer.current);
-    setNotice(null);
-    if (!playback || !trackId || marksRef.current.has(trackId)) {
+    if (trackId !== trackIdRef.current) {
+      trackIdRef.current = trackId;
+      loadedTrackRef.current = null;
+      setActiveIndex(-1);
       setLyrics({ status: "idle" });
-      return;
+      setTranslation({ status: "idle" });
+      setReportState("idle");
+      clearTimeout(noticeTimer.current);
+      setNotice(null);
     }
-    loadLyrics(playback);
-  }, [playback, loadLyrics]);
+    if (
+      playback &&
+      shouldLoadLyrics(
+        trackId,
+        marksReady,
+        marksRef.current,
+        loadedTrackRef.current
+      )
+    ) {
+      loadLyrics(playback);
+    }
+  }, [playback, marksReady, loadLyrics]);
 
   // Covers the two paths the track-change effect cannot: the current
   // track just got marked, and the marks list arriving after the first

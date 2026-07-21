@@ -167,7 +167,15 @@ export function createApp(
               en: en[i] ?? "",
             })),
           };
-          await cache.write(entry);
+          // Re-check the mark at write time: a mark made while the
+          // provider was running deletes the cache, and this write must
+          // not resurrect it. The client still gets the translation;
+          // it just is not persisted. /api/mark records the mark before
+          // queueing the delete, so a write ordered after the delete
+          // always sees the mark.
+          await cache.writeUnless(entry, async () =>
+            Boolean(await markStore.get(trackId))
+          );
           return entry;
         })();
         inFlight.set(trackId, pending);

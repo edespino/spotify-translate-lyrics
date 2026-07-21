@@ -8,6 +8,16 @@ import type {
 // Client for the local translation server. All calls go through the
 // Vite dev proxy at /api.
 
+// The server's guard for translating a marked track (409). Surfaced as
+// its own type so the app can suppress the lyrics instead of showing a
+// translation error.
+export class TrackMarkedError extends Error {
+  constructor() {
+    super("Track marked wrong");
+    this.name = "TrackMarkedError";
+  }
+}
+
 export async function getTranslation(
   trackId: string
 ): Promise<TranslationEntry | null> {
@@ -30,6 +40,7 @@ export async function requestTranslation(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ trackId, title, artist, lines, timesMs, lrclibId }),
   });
+  if (res.status === 409) throw new TrackMarkedError();
   if (!res.ok) throw new Error(`Server error ${res.status}`);
   return res.json();
 }

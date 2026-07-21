@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   canMarkWrong,
   MARKED_MESSAGE,
+  markedFallbackRecord,
   markRequest,
   reportSpec,
+  shouldLoadLyrics,
   toMarkMap,
 } from "./markedLyrics";
 import type { MarkedTrack } from "../types";
@@ -102,6 +104,45 @@ describe("markRequest", () => {
   it("omits the lrclibId when the result has none", () => {
     const req = markRequest(playback, { kind: "synced", lines: [] });
     expect("lrclibId" in req).toBe(false);
+  });
+});
+
+describe("shouldLoadLyrics", () => {
+  const marks = toMarkMap([record()]);
+
+  it("never loads any track before the marks list resolves", () => {
+    // A marked track playing at boot: playback arrives while marks are
+    // still loading. Nothing may fetch, marked or not.
+    expect(shouldLoadLyrics("t1", false, new Map(), null)).toBe(false);
+    expect(shouldLoadLyrics("t9", false, new Map(), null)).toBe(false);
+  });
+
+  it("skips marked tracks once ready", () => {
+    expect(shouldLoadLyrics("t1", true, marks, null)).toBe(false);
+  });
+
+  it("loads an unmarked track exactly once", () => {
+    expect(shouldLoadLyrics("t9", true, marks, null)).toBe(true);
+    expect(shouldLoadLyrics("t9", true, marks, "t9")).toBe(false);
+  });
+
+  it("does nothing without a track", () => {
+    expect(shouldLoadLyrics(null, true, new Map(), null)).toBe(false);
+  });
+});
+
+describe("markedFallbackRecord", () => {
+  it("builds a suppressing record without an lrclibId", () => {
+    const rec = markedFallbackRecord({
+      trackId: "t1",
+      title: "Cancion",
+      artist: "Artista",
+    });
+    expect(rec.trackId).toBe("t1");
+    expect(rec.title).toBe("Cancion");
+    expect(rec.artist).toBe("Artista");
+    expect(typeof rec.markedAt).toBe("string");
+    expect(rec.lrclibId).toBeUndefined();
   });
 });
 

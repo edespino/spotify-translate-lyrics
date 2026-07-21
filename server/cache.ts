@@ -68,6 +68,21 @@ export class TranslationCache {
     await this.mutate(entry.trackId, () => this.writeUnlocked(entry));
   }
 
+  // Conditional write for the translate path: the skip check runs
+  // inside the same per-track queue turn as the write, so a mark whose
+  // remove() is already queued cannot have its delete undone by a
+  // translation that finished mid-mark. Returns whether it wrote.
+  async writeUnless(
+    entry: TranslationEntry,
+    skip: () => Promise<boolean>
+  ): Promise<boolean> {
+    return this.mutate(entry.trackId, async () => {
+      if (await skip()) return false;
+      await this.writeUnlocked(entry);
+      return true;
+    });
+  }
+
   // Deletes the cached translation for a track (used when its lyrics
   // are marked wrong, so a later reset re-translates fresh). A missing
   // file is not an error.
