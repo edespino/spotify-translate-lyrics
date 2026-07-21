@@ -193,11 +193,11 @@ button.primary:hover {
 .lyrics-scroll {
   flex: 1;
   overflow-y: auto;
-  /* Asymmetric spacers for the 32% active-line anchor: the leading pad
-     only needs to let the first line reach the anchor (and is scrolled
-     past entirely in the top-anchored intro state); the trailing pad
-     must let the last line travel all the way up to it. */
-  padding: 32vh 0 68vh;
+  /* Only a trailing spacer: the scroll target is clamped so the list
+     never scrolls above the first line (early active lines highlight in
+     place), so no leading pad is needed; the trailing pad lets the last
+     line travel all the way up to the 32% active-line anchor. */
+  padding: 0 0 68vh;
   scrollbar-width: thin;
 }
 

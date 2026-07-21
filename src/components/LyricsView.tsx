@@ -64,23 +64,28 @@ export default function LyricsView({
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+    const first = container.querySelector<HTMLElement>('[data-row="0"]');
+    const topAnchor = first ? first.offsetTop : 0;
     if (activeIndex < 0) {
       // No active line yet (intro, or plain unsynced lyrics): anchor the
-      // list at the top so the leading spacer is scrolled past instead
-      // of showing as a large gap above the first line.
-      const first = container.querySelector<HTMLElement>('[data-row="0"]');
-      if (first) container.scrollTo({ top: first.offsetTop, behavior: "auto" });
+      // list at the top so the first line sits at the top of the pane.
+      container.scrollTo({ top: topAnchor, behavior: "auto" });
       return;
     }
     const row = container.querySelector<HTMLElement>(
       `[data-row="${activeIndex}"]`
     );
     if (!row) return;
+    // Clamp so scrollTop never drops below the top-anchor position: early
+    // active lines highlight in place while the list stays top-anchored;
+    // smooth scrolling engages once a line would sit below the anchor.
     container.scrollTo({
-      top:
+      top: Math.max(
+        topAnchor,
         row.offsetTop +
-        row.offsetHeight / 2 -
-        container.clientHeight * ACTIVE_ANCHOR,
+          row.offsetHeight / 2 -
+          container.clientHeight * ACTIVE_ANCHOR
+      ),
       behavior: "smooth",
     });
   }, [activeIndex]);
