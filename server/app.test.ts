@@ -317,8 +317,12 @@ describe.sequential("translation server", () => {
   });
 
   it("returns cached lyrics promptly when title backfill is slow", async () => {
+    let releaseTitle!: (value: string[]) => void;
     const provider = providerWith(
-      async () => new Promise<string[]>(() => {})
+      async () =>
+        new Promise<string[]>((resolve) => {
+          releaseTitle = resolve;
+        })
     );
     const app = createApp(provider, dir);
     mkdirSync(path.join(dir, "translations"), { recursive: true });
@@ -347,6 +351,11 @@ describe.sequential("translation server", () => {
     expect(firstRes.body.lines[0].en).toBe("old hello");
     expect(secondRes.body.lines[0].en).toBe("old hello");
     expect(provider.translate).toHaveBeenCalledTimes(1);
+
+    releaseTitle(["EN:Cancion"]);
+    const drained = await request(app).get("/api/translations/abc123");
+    expect(drained.status).toBe(200);
+    expect(drained.body.titleEn).toBe("EN:Cancion");
   });
 
   it("returns cached lyrics when title backfill fails and leaves titleEn absent", async () => {
@@ -441,8 +450,17 @@ describe.sequential("translation server", () => {
   });
 
   it("keeps an override written during title backfill", async () => {
-    const provider = providerWith(async (lines) =>
-      lines.map((l) => `EN:${l}`)
+    let releaseTitle!: () => void;
+    let resolveTitleStarted: (() => void) | undefined;
+    const titleStarted = new Promise<void>((resolve) => {
+      resolveTitleStarted = resolve;
+    });
+    const provider = providerWith(
+      async (lines) =>
+        new Promise<string[]>((resolve) => {
+          releaseTitle = () => resolve(lines.map((l) => `EN:${l}`));
+          resolveTitleStarted?.();
+        })
     );
     const app = createApp(provider, dir);
     mkdirSync(path.join(dir, "translations"), { recursive: true });
@@ -456,71 +474,30 @@ describe.sequential("translation server", () => {
       })
     );
 
-    const realWriteFile = fs.writeFile.bind(fs);
-    let releaseTitleWrite: (() => void) | undefined;
-    const writeFile = vi.spyOn(fs, "writeFile").mockImplementation(
-      async (
-        file: Parameters<typeof fs.writeFile>[0],
-        data: Parameters<typeof fs.writeFile>[1],
-        options?: Parameters<typeof fs.writeFile>[2]
-      ) => {
-        const text = typeof data === "string" ? data : data.toString();
-        if (
-          text.includes('"titleEn": "EN:Cancion"') &&
-          !text.includes("editedEn") &&
-          releaseTitleWrite === undefined
-        ) {
-          await new Promise<void>((resolve) => {
-            releaseTitleWrite = resolve;
-          });
-        }
-        return realWriteFile(file, data, options);
-      }
+    const backfill = request(app)
+      .post("/api/translate")
+      .send(body)
+      .then((res) => res);
+    await titleStarted;
+
+    const overrideRes = await request(app).post("/api/override").send({
+      trackId: "abc123",
+      lineIndex: 0,
+      field: "en",
+      text: "my hello",
+    });
+    expect(overrideRes.status).toBe(200);
+
+    releaseTitle();
+    const backfillRes = await backfill;
+    expect(backfillRes.status).toBe(200);
+
+    const file = JSON.parse(
+      readFileSync(path.join(dir, "translations", "abc123.json"), "utf8")
     );
-
-    try {
-      const backfill = request(app)
-        .post("/api/translate")
-        .send(body)
-        .then((res) => res);
-      while (!releaseTitleWrite) {
-        await new Promise((resolve) => setTimeout(resolve, 1));
-      }
-
-      let overrideDone = false;
-      const override = request(app)
-        .post("/api/override")
-        .send({
-          trackId: "abc123",
-          lineIndex: 0,
-          field: "en",
-          text: "my hello",
-        })
-        .then((res) => {
-          overrideDone = true;
-          return res;
-        });
-
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      expect(overrideDone).toBe(false);
-      releaseTitleWrite();
-
-      const [backfillRes, overrideRes] = await Promise.all([
-        backfill,
-        override,
-      ]);
-      expect(backfillRes.status).toBe(200);
-      expect(overrideRes.status).toBe(200);
-
-      const file = JSON.parse(
-        readFileSync(path.join(dir, "translations", "abc123.json"), "utf8")
-      );
-      expect(file.titleEn).toBe("EN:Cancion");
-      expect(file.lines[0].en).toBe("old hello");
-      expect(file.lines[0].editedEn).toBe("my hello");
-    } finally {
-      writeFile.mockRestore();
-    }
+    expect(file.titleEn).toBe("EN:Cancion");
+    expect(file.lines[0].en).toBe("old hello");
+    expect(file.lines[0].editedEn).toBe("my hello");
   });
 
   it("retranslate refreshes titleEn, including on a pre-title cache entry", async () => {
