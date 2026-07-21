@@ -88,13 +88,13 @@ button.primary:hover {
   text-overflow: ellipsis;
 }
 
+/* Inline after the original title inside .track-title, which already
+   handles nowrap and ellipsis for the pair. */
 .track-title-en {
   color: var(--text-dim);
-  font-size: 13px;
-  font-style: italic;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: 14px;
+  font-weight: 400;
+  margin-left: 8px;
 }
 
 .track-artist {
@@ -147,6 +147,8 @@ button.primary:hover {
 .pane-headers {
   display: grid;
   grid-template-columns: 1fr 1fr;
+  /* Same gap as .lyric-row so headers align with their columns. */
+  gap: 24px;
   padding: 10px 40px;
   border-bottom: 1px solid #2a2a2a;
 }
@@ -172,15 +174,32 @@ button.primary:hover {
   text-align: center;
 }
 
-.lyrics-view.single .lyric-row.focused {
-  transform-origin: center center;
-}
-
 .translation-error {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   color: #e57373;
   text-transform: none;
   letter-spacing: normal;
   font-weight: 400;
+}
+
+.retry-button {
+  background: none;
+  border: 1px solid #e57373;
+  color: #e57373;
+  border-radius: 14px;
+  padding: 5px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.retry-button:hover {
+  background: #e57373;
+  color: var(--bg);
 }
 
 .pending {
@@ -215,34 +234,105 @@ button.primary:hover {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 24px;
-  padding: 10px 40px;
+  padding: clamp(10px, 1vh, 16px) 40px;
   cursor: pointer;
-  transition: transform 0.2s ease;
+}
+
+.lyric-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 4px;
 }
 
 .lyric-cell {
-  font-size: 24px;
+  font-size: clamp(22px, 1.9vw, 32px);
   font-weight: 700;
   line-height: 1.35;
-  color: var(--text-dim);
-  transition: color 0.2s ease;
+  /* Upcoming lines. Past lines (.past) render brighter to encode
+     direction; both stay above 3:1 contrast on the #121212 background. */
+  color: #8f8f8f;
+}
+
+.lyric-row.past .lyric-cell {
+  color: #d0d0d0;
 }
 
 .lyric-row.active .lyric-cell {
   color: var(--text);
 }
 
-.lyric-row.focused {
-  transform: scale(1.05);
-  transform-origin: left center;
+/* Hover stays a step below the active line's white so it cannot be
+   mistaken for the active row, and never overrides the focused accent. */
+.lyric-row:not(.active):not(.focused):hover .lyric-cell {
+  color: #d6d6d6;
 }
 
+/* The focused accent color is unconditional; the enlarge transform is
+   motion and lives in the no-preference media block below. */
 .lyric-row.focused .lyric-cell {
   color: var(--accent);
 }
 
-.lyric-row:hover .lyric-cell {
-  color: var(--text);
+/* Dual-pane only: the Spanish column right-aligns so every pair meets
+   the central gutter with a constant jump. */
+.lyrics-view:not(.single) .lyric-row .lyric-cell:first-child {
+  text-align: right;
+}
+
+.lyrics-view:not(.single) .lyric-row .lyric-cell:first-child .edit-input {
+  text-align: right;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .lyric-cell {
+    /* Color eases in over roughly the same window as the ~400ms smooth
+       scroll so the highlight lands with the motion. */
+    transition: color 0.35s ease-out, transform 0.2s ease;
+  }
+
+  .lyric-row.active:not(.focused) .lyric-cell {
+    transform: scale(1.02);
+  }
+
+  /* Enlarge scales each cell from its own edge, not the row, so the two
+     columns keep their alignment at the central gutter. */
+  .lyric-row.focused .lyric-cell {
+    transform: scale(1.05);
+    transform-origin: left center;
+  }
+
+  /* Spanish cells scale from the right edge so enlarging keeps the text
+     anchored at the central gutter; single-pane centered text scales
+     from its center. */
+  .lyrics-view:not(.single) .lyric-row .lyric-cell:first-child {
+    transform-origin: right center;
+  }
+
+  .lyrics-view.single .lyric-row.focused .lyric-cell {
+    transform-origin: center center;
+  }
+
+  .lyric-row.active .note {
+    display: inline-block;
+    animation: note-pulse 1.6s ease-in-out infinite;
+  }
+}
+
+@keyframes note-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* Dim placeholder for a failed translation; distinct from the pending
+   dots so an error never looks like loading. */
+.en-missing {
+  color: #555;
+  font-weight: 400;
 }
 
 .edited-marks {
@@ -250,6 +340,17 @@ button.primary:hover {
   font-size: 13px;
   font-weight: 400;
   color: var(--text-dim);
+}
+
+/* The asterisk stays as the passive edited indicator; the reset link
+   only appears while the row is hovered or holds keyboard focus. */
+.edited-marks .link-button {
+  visibility: hidden;
+}
+
+.lyric-row:hover .edited-marks .link-button,
+.lyric-row:focus-within .edited-marks .link-button {
+  visibility: visible;
 }
 
 .edited-marker {
