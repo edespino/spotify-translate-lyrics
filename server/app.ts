@@ -26,7 +26,11 @@ export function createApp(provider: TranslationProvider, dataDir: string) {
   async function backfillTitleEn(
     entry: TranslationEntry
   ): Promise<TranslationEntry> {
-    if (entry.titleEn !== undefined || !hasTranslatedLyrics(entry)) {
+    if (
+      entry.titleEn !== undefined ||
+      entry.title.trim() === "" ||
+      !hasTranslatedLyrics(entry)
+    ) {
       return entry;
     }
 
@@ -131,10 +135,13 @@ export function createApp(provider: TranslationProvider, dataDir: string) {
           artist: entry.artist,
         }
       );
-      entry.titleEn = titleEn;
-      cache.applyRetranslation(entry, fresh);
-      await cache.write(entry);
-      res.json(entry);
+      const updated = await cache.applyRetranslationAndWrite(
+        trackId,
+        titleEn,
+        fresh
+      );
+      if (!updated) return res.status(404).json({ error: "Not cached" });
+      res.json(updated);
     } catch (err: any) {
       const status = err instanceof TranslationFailedError ? 502 : 500;
       res.status(status).json({ error: err?.message || "Retranslation failed" });

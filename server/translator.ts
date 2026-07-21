@@ -212,17 +212,12 @@ export async function translateTitle(
   provider: TranslationProvider,
   meta: TrackMeta
 ): Promise<string> {
-  try {
-    const result = await provider.translate([meta.title], {
-      ...meta,
-      titleFirst: true,
-    });
-    if (result.length !== 1) {
-      throw new TranslationFailedError("Title translation count mismatch");
-    }
-    return result[0];
-  } catch (err) {
-    if (err instanceof TranslationFailedError) throw err;
+  const result = await callProvider(provider, [meta.title], {
+    ...meta,
+    titleFirst: true,
+  });
+  if (!result) {
     throw new TranslationFailedError("Title translation failed");
   }
+  return result[0];
 }
