@@ -87,6 +87,49 @@ export function isGlossClick(
   return altKey && !metaKey && !ctrlKey;
 }
 
+// Pointer choreography around the two hover timers, as a pure mapping
+// from pointer events to timer actions so the sequences are testable:
+// the open timer (GLOSS_HOVER_MS before a hovered word opens) and the
+// leave timer (a short grace period after leaving the word or popover
+// before dismissing, so the pointer can travel between them). Entering
+// ANY gloss word cancels a pending leave: moving from word A to word B
+// must leave A's popover up until B's own open replaces it, never let
+// A's grace timer fire mid-hover and kill B's pending open (dismissal
+// clears the open timer too). Entering the word the open popover
+// belongs to just keeps it: no new open is scheduled.
+export type GlossHoverEvent =
+  | { type: "enterWord"; sameAsOpen: boolean }
+  | { type: "leaveWord"; popoverOpen: boolean }
+  | { type: "enterPopover" }
+  | { type: "leavePopover" };
+
+export interface GlossHoverActions {
+  cancelOpen: boolean;
+  startOpen: boolean;
+  cancelLeave: boolean;
+  startLeave: boolean;
+}
+
+export function glossHoverStep(event: GlossHoverEvent): GlossHoverActions {
+  switch (event.type) {
+    case "enterWord":
+      return event.sameAsOpen
+        ? { cancelOpen: false, startOpen: false, cancelLeave: true, startLeave: false }
+        : { cancelOpen: true, startOpen: true, cancelLeave: true, startLeave: false };
+    case "leaveWord":
+      return {
+        cancelOpen: true,
+        startOpen: false,
+        cancelLeave: false,
+        startLeave: event.popoverOpen,
+      };
+    case "enterPopover":
+      return { cancelOpen: false, startOpen: false, cancelLeave: true, startLeave: false };
+    case "leavePopover":
+      return { cancelOpen: false, startOpen: false, cancelLeave: false, startLeave: true };
+  }
+}
+
 // Popover state machine. A result event (loaded/failed/invalid) applies
 // only while still loading that same word and context, so a late
 // response for a dismissed or replaced popover never renders. Opening
@@ -168,5 +211,12 @@ export function glossPopoverPosition(
   if (top + size.height > view.scrollTop + view.clientHeight - GLOSS_MARGIN) {
     top = anchor.top - size.height - GLOSS_GAP;
   }
+  // Clamp into the visible region after the flip decision, so neither
+  // placement can poke outside the pane; when the pane is too small for
+  // the popover to fit at all, the top clamp wins and the popover stays
+  // pinned inside from the top.
+  const minTop = view.scrollTop + GLOSS_MARGIN;
+  const maxTop = view.scrollTop + view.clientHeight - size.height - GLOSS_MARGIN;
+  top = Math.max(minTop, Math.min(top, maxTop));
   return { left, top };
 }

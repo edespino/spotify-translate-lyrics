@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { GlossEntry } from "../gloss";
 import {
   glossEligible,
+  glossHoverStep,
   glossPopoverNext,
   glossPopoverPosition,
   isGlossClick,
@@ -72,6 +73,12 @@ describe.each(segmenters)("%s", (_name, segment) => {
     }
   });
 
+  it("preserves leading whitespace exactly", () => {
+    const line = "  hola mundo";
+    expect(joined(segment(line))).toBe(line);
+    expect(words(segment(line))).toEqual(["hola", "mundo"]);
+  });
+
   it("preserves multiple spaces exactly", () => {
     const line = "uno   dos  tres";
     expect(joined(segment(line))).toBe(line);
@@ -124,6 +131,93 @@ describe("isGlossClick", () => {
   it("rejects alt chords with meta or ctrl", () => {
     expect(isGlossClick(true, true, false)).toBe(false);
     expect(isGlossClick(true, false, true)).toBe(false);
+  });
+});
+
+describe("glossHoverStep", () => {
+  it("entering a new word schedules its open and cancels a pending leave", () => {
+    expect(glossHoverStep({ type: "enterWord", sameAsOpen: false })).toEqual({
+      cancelOpen: true,
+      startOpen: true,
+      cancelLeave: true,
+      startLeave: false,
+    });
+  });
+
+  it("entering the open popover's own word only keeps it", () => {
+    expect(glossHoverStep({ type: "enterWord", sameAsOpen: true })).toEqual({
+      cancelOpen: false,
+      startOpen: false,
+      cancelLeave: true,
+      startLeave: false,
+    });
+  });
+
+  it("leaving a word cancels a pending open, and starts the grace timer only when a popover is up", () => {
+    expect(glossHoverStep({ type: "leaveWord", popoverOpen: true })).toEqual({
+      cancelOpen: true,
+      startOpen: false,
+      cancelLeave: false,
+      startLeave: true,
+    });
+    expect(
+      glossHoverStep({ type: "leaveWord", popoverOpen: false }).startLeave
+    ).toBe(false);
+  });
+
+  it("entering the popover cancels the grace timer; leaving it starts one", () => {
+    expect(glossHoverStep({ type: "enterPopover" }).cancelLeave).toBe(true);
+    expect(glossHoverStep({ type: "enterPopover" }).startLeave).toBe(false);
+    expect(glossHoverStep({ type: "leavePopover" }).startLeave).toBe(true);
+  });
+
+  // Sequence harness: applies steps to two simulated pending timers,
+  // mirroring how LyricsView executes the actions against its refs.
+  function timers() {
+    const state = { openPending: false, leavePending: false };
+    return {
+      state,
+      apply(event: Parameters<typeof glossHoverStep>[0]) {
+        const a = glossHoverStep(event);
+        if (a.cancelOpen) state.openPending = false;
+        if (a.cancelLeave) state.leavePending = false;
+        if (a.startOpen) state.openPending = true;
+        if (a.startLeave) state.leavePending = true;
+      },
+    };
+  }
+
+  it("moving from word A (popover open) to word B leaves B's open pending and no leave timer", () => {
+    const t = timers();
+    // A's popover is open; leaving A starts the grace timer.
+    t.apply({ type: "leaveWord", popoverOpen: true });
+    expect(t.state.leavePending).toBe(true);
+    // Entering B must cancel that grace timer, or its dismissal would
+    // clear B's pending open; A's popover stays up until B's open
+    // replaces it (the another-gloss-opening path).
+    t.apply({ type: "enterWord", sameAsOpen: false });
+    expect(t.state.leavePending).toBe(false);
+    expect(t.state.openPending).toBe(true);
+  });
+
+  it("leaving word A and re-entering it within the grace period keeps A open", () => {
+    const t = timers();
+    t.apply({ type: "leaveWord", popoverOpen: true });
+    expect(t.state.leavePending).toBe(true);
+    t.apply({ type: "enterWord", sameAsOpen: true });
+    expect(t.state.leavePending).toBe(false);
+    expect(t.state.openPending).toBe(false);
+  });
+
+  it("word to popover and back never leaves a live grace timer", () => {
+    const t = timers();
+    t.apply({ type: "leaveWord", popoverOpen: true });
+    t.apply({ type: "enterPopover" });
+    expect(t.state.leavePending).toBe(false);
+    t.apply({ type: "leavePopover" });
+    expect(t.state.leavePending).toBe(true);
+    t.apply({ type: "enterWord", sameAsOpen: true });
+    expect(t.state.leavePending).toBe(false);
   });
 });
 
@@ -249,5 +343,31 @@ describe("glossPopoverPosition", () => {
     const anchor = { left: 100, top: 1540, bottom: 1570 };
     const pos = glossPopoverPosition(anchor, size, view);
     expect(pos.top).toBe(1540 - 80 - 6);
+  });
+
+  it("clamps a flip above the visible top back down into view", () => {
+    // Short pane: below the word overflows the visible bottom, so it
+    // flips, but the word is so close to the visible top that the
+    // flipped position would poke above it.
+    const shortView = { scrollTop: 1000, clientWidth: 800, clientHeight: 100 };
+    const anchor = { left: 100, top: 1040, bottom: 1060 };
+    const pos = glossPopoverPosition(anchor, size, shortView);
+    expect(pos.top).toBe(1000 + 8);
+  });
+
+  it("a tall popover near the visible bottom flips and stays fully visible", () => {
+    const tall = { width: 200, height: 240 };
+    const anchor = { left: 100, top: 1500, bottom: 1530 };
+    const pos = glossPopoverPosition(anchor, tall, view);
+    expect(pos.top).toBe(1500 - 240 - 6);
+    expect(pos.top).toBeGreaterThanOrEqual(1000 + 8);
+    expect(pos.top + tall.height).toBeLessThanOrEqual(1000 + 600 - 8);
+  });
+
+  it("in a pane too small for the popover the top clamp wins", () => {
+    const tinyView = { scrollTop: 0, clientWidth: 800, clientHeight: 60 };
+    const anchor = { left: 100, top: 20, bottom: 40 };
+    const pos = glossPopoverPosition(anchor, size, tinyView);
+    expect(pos.top).toBe(8);
   });
 });

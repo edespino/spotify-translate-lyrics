@@ -7,6 +7,8 @@ import {
   GLOSS_GAP,
   GLOSS_HOVER_MS,
   glossEligible,
+  glossHoverStep,
+  type GlossHoverEvent,
   glossPopoverNext,
   glossPopoverPosition,
   isGlossClick,
@@ -178,38 +180,44 @@ export default function LyricsView({
     );
   };
 
-  // Leaving the word or the popover starts a short grace timer instead
-  // of dismissing outright, so moving the pointer from the word into the
-  // popover (to select its text) keeps it open.
-  const scheduleGlossLeave = () => {
-    clearTimer(leaveTimerRef);
-    leaveTimerRef.current = window.setTimeout(() => {
-      leaveTimerRef.current = null;
-      dismissGloss();
-    }, 120);
-  };
-
-  const wordEnter = (word: string, context: string, el: HTMLElement) => {
-    if (
-      gloss &&
-      gloss.state.word === word &&
-      gloss.state.context === context
-    ) {
-      // Back over the word the open popover belongs to: keep it.
-      clearTimer(leaveTimerRef);
-      return;
+  // Pointer choreography (which timers start and stop on each enter and
+  // leave) is the pure glossHoverStep mapping; this just executes its
+  // actions against the two timer refs.
+  const runHoverStep = (
+    event: GlossHoverEvent,
+    open?: { word: string; context: string; el: HTMLElement }
+  ) => {
+    const actions = glossHoverStep(event);
+    if (actions.cancelOpen) clearTimer(hoverTimerRef);
+    if (actions.cancelLeave) clearTimer(leaveTimerRef);
+    if (actions.startOpen && open) {
+      hoverTimerRef.current = window.setTimeout(() => {
+        hoverTimerRef.current = null;
+        openGloss(open.word, open.context, open.el);
+      }, GLOSS_HOVER_MS);
     }
-    clearTimer(hoverTimerRef);
-    hoverTimerRef.current = window.setTimeout(() => {
-      hoverTimerRef.current = null;
-      openGloss(word, context, el);
-    }, GLOSS_HOVER_MS);
+    if (actions.startLeave) {
+      leaveTimerRef.current = window.setTimeout(() => {
+        leaveTimerRef.current = null;
+        dismissGloss();
+      }, 120);
+    }
   };
 
-  const wordLeave = () => {
-    clearTimer(hoverTimerRef);
-    if (gloss) scheduleGlossLeave();
-  };
+  const wordEnter = (word: string, context: string, el: HTMLElement) =>
+    runHoverStep(
+      {
+        type: "enterWord",
+        sameAsOpen:
+          gloss !== null &&
+          gloss.state.word === word &&
+          gloss.state.context === context,
+      },
+      { word, context, el }
+    );
+
+  const wordLeave = () =>
+    runHoverStep({ type: "leaveWord", popoverOpen: gloss !== null });
 
   // Escape and scrolling the lyrics container both dismiss the popover.
   const glossOpen = gloss !== null;
@@ -640,8 +648,8 @@ export default function LyricsView({
               left: gloss.anchor.left,
               top: gloss.anchor.bottom + GLOSS_GAP,
             }}
-            onMouseEnter={() => clearTimer(leaveTimerRef)}
-            onMouseLeave={scheduleGlossLeave}
+            onMouseEnter={() => runHoverStep({ type: "enterPopover" })}
+            onMouseLeave={() => runHoverStep({ type: "leavePopover" })}
           >
             {gloss.state.status === "loading" ? (
               <span className="skeleton gloss-skeleton" />
