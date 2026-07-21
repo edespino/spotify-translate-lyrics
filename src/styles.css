@@ -375,12 +375,14 @@ button.primary:hover {
 }
 
 /* Dual-pane only: the Spanish column right-aligns so every pair meets
-   the central gutter with a constant jump. */
-.lyrics-view:not(.single) .lyric-row .lyric-cell:first-child {
+   the central gutter with a constant jump. first-of-type, not
+   first-child: the replay button, when a row has one, precedes the two
+   cells, so the Spanish cell is not always the first child. */
+.lyrics-view:not(.single) .lyric-row .lyric-cell:first-of-type {
   text-align: right;
 }
 
-.lyrics-view:not(.single) .lyric-row .lyric-cell:first-child .edit-input {
+.lyrics-view:not(.single) .lyric-row .lyric-cell:first-of-type .edit-input {
   text-align: right;
 }
 
@@ -405,7 +407,7 @@ button.primary:hover {
   /* Spanish cells scale from the right edge so enlarging keeps the text
      anchored at the central gutter; single-pane centered text scales
      from its center. */
-  .lyrics-view:not(.single) .lyric-row .lyric-cell:first-child {
+  .lyrics-view:not(.single) .lyric-row .lyric-cell:first-of-type {
     transform-origin: right center;
   }
 
