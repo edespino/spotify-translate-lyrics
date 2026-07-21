@@ -35,12 +35,31 @@ export function enCellState(
   return translationStatus === "error" ? "error" : "pending";
 }
 
-export type RowKeyAction = "toggle" | "edit" | null;
+export type RowKeyAction = "toggle" | "edit" | "replay" | null;
 
 export function rowKeyAction(key: string): RowKeyAction {
   if (key === "Enter") return "toggle";
   if (key === "F2" || key === "e") return "edit";
+  if (key === "r") return "replay";
   return null;
+}
+
+// Replay needs a timestamp to seek to and an audible lyric to hear:
+// plain (unsynced) rows have no timestamp and instrumental placeholder
+// rows (the musical note) have no text.
+export function replayEligible(timeMs: number | null, text: string): boolean {
+  return timeMs !== null && text.trim() !== "";
+}
+
+// Guards the global "r" shortcut so it never fires while typing in the
+// edit input (or any other text control).
+export function isTypingTarget(
+  tagName: string | undefined,
+  isContentEditable: boolean
+): boolean {
+  if (isContentEditable) return true;
+  const tag = (tagName ?? "").toUpperCase();
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 }
 
 // Long jumps (seeks) snap instead of animating the whole list past the

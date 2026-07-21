@@ -41,6 +41,8 @@ Songs whose lyrics are already English are detected client-side and shown as a s
 
 Double-click any line to edit it, Enter saves, Escape cancels. Edited lines get a small marker and a per-line reset link. "Retranslate all" redoes the translation but never touches lines you edited. Clicking a line enlarges it.
 
+Any synced line can be replayed from its start: click the small replay glyph that appears on the active line (and on hover or focus), press `r` while a line is focused, or press `r` anywhere to replay the current line. Replay seeks Spotify playback, which requires the `user-modify-playback-state` scope: sessions connected before this feature existed must click Connect Spotify once more to grant it. Replay needs an active Spotify device; without one a brief notice appears instead.
+
 Translations and edits live in `data/translations/`, one JSON file per track. That directory is gitignored on purpose: it is derived from copyrighted lyrics and should never be committed.
 
 ## Scripts

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   enCellState,
+  isTypingTarget,
+  replayEligible,
   rowClassName,
   rowKeyAction,
   rowPhase,
@@ -59,10 +61,47 @@ describe("rowKeyAction", () => {
     expect(rowKeyAction("e")).toBe("edit");
   });
 
+  it("maps r to replay", () => {
+    expect(rowKeyAction("r")).toBe("replay");
+    expect(rowKeyAction("R")).toBeNull();
+  });
+
   it("ignores other keys", () => {
     expect(rowKeyAction("a")).toBeNull();
     expect(rowKeyAction("Escape")).toBeNull();
     expect(rowKeyAction("ArrowDown")).toBeNull();
+  });
+});
+
+describe("replayEligible", () => {
+  it("allows timestamped rows with text", () => {
+    expect(replayEligible(0, "hola")).toBe(true);
+    expect(replayEligible(12000, "line")).toBe(true);
+  });
+
+  it("rejects rows without a timestamp (plain lyrics)", () => {
+    expect(replayEligible(null, "hola")).toBe(false);
+  });
+
+  it("rejects instrumental placeholder rows (empty text)", () => {
+    expect(replayEligible(12000, "")).toBe(false);
+    expect(replayEligible(12000, "   ")).toBe(false);
+  });
+});
+
+describe("isTypingTarget", () => {
+  it("guards text controls and contentEditable", () => {
+    expect(isTypingTarget("INPUT", false)).toBe(true);
+    expect(isTypingTarget("input", false)).toBe(true);
+    expect(isTypingTarget("TEXTAREA", false)).toBe(true);
+    expect(isTypingTarget("SELECT", false)).toBe(true);
+    expect(isTypingTarget("DIV", true)).toBe(true);
+  });
+
+  it("passes everything else through", () => {
+    expect(isTypingTarget("DIV", false)).toBe(false);
+    expect(isTypingTarget("BUTTON", false)).toBe(false);
+    expect(isTypingTarget(undefined, false)).toBe(false);
   });
 });
 

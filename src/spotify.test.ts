@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AuthError,
+  RateLimitError,
+  SeekUnavailableError,
   fetchCurrentlyPlaying,
   handleCallback,
+  seekTo,
 } from "./spotify";
 
 const TOKEN_KEY = "spotify_tokens";
@@ -137,6 +140,65 @@ describe("401 handling and refresh", () => {
       return jsonResponse(401);
     });
     await expect(fetchCurrentlyPlaying()).rejects.toThrow(AuthError);
+    expect(storage.getItem(TOKEN_KEY)).toBeNull();
+  });
+
+  it("seekTo PUTs the rounded position to the seek endpoint", async () => {
+    storeTokens(Date.now() + 3600_000);
+    fetchMock.mockResolvedValueOnce(jsonResponse(204));
+    await seekTo(12345.6);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe(
+      "https://api.spotify.com/v1/me/player/seek?position_ms=12346"
+    );
+    expect(init.method).toBe("PUT");
+    expect(init.headers.Authorization).toBe("Bearer old-access");
+  });
+
+  it("seekTo throws SeekUnavailableError on 403 and 404", async () => {
+    storeTokens(Date.now() + 3600_000);
+    fetchMock.mockResolvedValueOnce(jsonResponse(403));
+    await expect(seekTo(1000)).rejects.toThrow(SeekUnavailableError);
+    fetchMock.mockResolvedValueOnce(jsonResponse(404));
+    await expect(seekTo(1000)).rejects.toThrow(SeekUnavailableError);
+  });
+
+  it("seekTo throws RateLimitError on 429", async () => {
+    storeTokens(Date.now() + 3600_000);
+    fetchMock.mockResolvedValueOnce(jsonResponse(429));
+    await expect(seekTo(1000)).rejects.toThrow(RateLimitError);
+  });
+
+  it("seekTo refreshes on 401 and retries", async () => {
+    storeTokens(Date.now() + 3600_000);
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).includes("accounts.spotify.com")) {
+        return jsonResponse(200, {
+          access_token: "new-access",
+          refresh_token: "refresh-2",
+          expires_in: 3600,
+        });
+      }
+      return jsonResponse(fetchMock.mock.calls.length <= 1 ? 401 : 204);
+    });
+    await seekTo(1000);
+    const stored = JSON.parse(storage.getItem(TOKEN_KEY)!);
+    expect(stored.accessToken).toBe("new-access");
+  });
+
+  it("seekTo clears tokens when the retry still returns 401", async () => {
+    storeTokens(Date.now() + 3600_000);
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).includes("accounts.spotify.com")) {
+        return jsonResponse(200, {
+          access_token: "new-access",
+          refresh_token: "refresh-2",
+          expires_in: 3600,
+        });
+      }
+      return jsonResponse(401);
+    });
+    await expect(seekTo(1000)).rejects.toThrow(AuthError);
     expect(storage.getItem(TOKEN_KEY)).toBeNull();
   });
 
