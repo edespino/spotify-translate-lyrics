@@ -4,17 +4,29 @@ import type { LyricsResult } from "../types";
 import { skeletonWidth } from "./stateScreen";
 import {
   enCellState,
+  isTypingTarget,
   replayEligible,
   rowClassName,
   rowKeyAction,
   rowPhase,
   scrollBehavior,
 } from "./lyricsRow";
+import {
+  activeReveals,
+  enCellMasked,
+  isRevealKey,
+  loadRecallMode,
+  maskGesture,
+  nextReveals,
+  saveRecallMode,
+  type MaskPhase,
+} from "./recall";
 
 type Field = "es" | "en";
 
 interface Props {
   lyrics: Extract<LyricsResult, { kind: "synced" | "plain" }>;
+  trackId: string;
   english: boolean;
   translation: TranslationState;
   activeIndex: number;
@@ -50,6 +62,7 @@ function prefersReducedMotion(): boolean {
 // scroll together, one pane per column.
 export default function LyricsView({
   lyrics,
+  trackId,
   english,
   translation,
   activeIndex,
@@ -64,6 +77,40 @@ export default function LyricsView({
   const [editing, setEditing] = useState<{ index: number; field: Field } | null>(
     null
   );
+  // Active-recall mode: hide English translations until the listener
+  // reveals a line. The mode itself persists in localStorage; reveals
+  // are per track (activeReveals reads as empty once trackId changes).
+  // tail is the line whose mask button is still mounted after a pointer
+  // reveal, swallowing the rest of that same gesture; it lives inside
+  // the reveals object so a track change clears it with the reveals.
+  const [recallOn, setRecallOn] = useState(() => loadRecallMode());
+  const [reveals, setReveals] = useState<{
+    trackId: string;
+    indices: ReadonlySet<number>;
+    tail: number | null;
+  } | null>(null);
+
+  const revealedSet = activeReveals(reveals, trackId);
+  const tailIndex =
+    reveals && reveals.trackId === trackId ? reveals.tail : null;
+
+  const revealLine = (i: number, viaPointer: boolean) =>
+    setReveals({
+      trackId,
+      indices: nextReveals(revealedSet, i),
+      tail: viaPointer ? i : null,
+    });
+
+  const releaseTail = () =>
+    setReveals((r) => (r && r.tail !== null ? { ...r, tail: null } : r));
+
+  const toggleRecall = () => {
+    const next = !recallOn;
+    setRecallOn(next);
+    saveRecallMode(next);
+    // Toggling off and on starts a fresh recall pass over the track.
+    setReveals(null);
+  };
 
   const entry = translation.status === "ready" ? translation.entry : null;
   const sourceTexts =
@@ -143,6 +190,40 @@ export default function LyricsView({
     });
   }, [activeIndex, lyrics]);
 
+  // Global "t": reveal the active line's translation. Same guards as the
+  // global replay shortcut: never while typing, no modifier chords.
+  const activeEn = activeIndex >= 0 ? rows[activeIndex]?.en ?? null : null;
+  useEffect(() => {
+    if (english || !recallOn || activeIndex < 0) return;
+    if (
+      !enCellMasked(
+        recallOn,
+        enCellState(activeEn, translation.status),
+        revealedSet.has(activeIndex),
+        activeEn
+      )
+    )
+      return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!isRevealKey(e.key, e.metaKey, e.ctrlKey, e.altKey)) return;
+      const target = e.target as HTMLElement | null;
+      if (isTypingTarget(target?.tagName, target?.isContentEditable ?? false))
+        return;
+      e.preventDefault();
+      revealLine(activeIndex, false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [
+    english,
+    recallOn,
+    activeIndex,
+    activeEn,
+    translation.status,
+    revealedSet,
+    trackId,
+  ]);
+
   const toggleFocus = (i: number) =>
     setFocusedIndex(i === focusedIndex ? -1 : i);
 
@@ -219,8 +300,62 @@ export default function LyricsView({
       );
     }
     const state = field === "en" ? enCellState(row.en, translation.status) : "text";
+    const masked =
+      field === "en" && enCellMasked(recallOn, state, revealedSet.has(i), row.en);
+    const tail =
+      field === "en" &&
+      recallOn &&
+      state === "text" &&
+      tailIndex === i &&
+      revealedSet.has(i);
+    if (masked || tail) {
+      // The mask is a button: focusable, Enter/Space reveal for free, and
+      // its own click target so clicking the masked cell only reveals and
+      // never enlarges the row. The blurred text keeps the cell's natural
+      // height so column alignment and scrolling are untouched. After a
+      // pointer reveal the button stays mounted (unblurred, the tail
+      // phase) so the rest of that same gesture is swallowed by
+      // maskGesture; a fresh click passes through to enlarge and swaps in
+      // the plain cell, as do leaving or blurring the button.
+      const phase: MaskPhase = masked ? "masked" : "tail";
+      const step = (
+        e: { stopPropagation(): void; detail: number },
+        type: "click" | "dblclick"
+      ) => {
+        const s = maskGesture(phase, type, e.detail);
+        if (s.action !== "pass") e.stopPropagation();
+        if (s.action === "reveal") revealLine(i, true);
+        else if (s.phase === "released") releaseTail();
+      };
+      return (
+        <button
+          className={masked ? "masked-cell" : "masked-cell revealed"}
+          aria-label={
+            masked ? "translation hidden, click to reveal" : undefined
+          }
+          onClick={(e) => step(e, "click")}
+          onDoubleClick={(e) => step(e, "dblclick")}
+          onMouseLeave={masked ? undefined : releaseTail}
+          onBlur={masked ? undefined : releaseTail}
+        >
+          <span
+            className={masked ? "masked-text" : "masked-text revealed"}
+            aria-hidden={masked ? "true" : undefined}
+          >
+            {row.en}
+          </span>
+        </button>
+      );
+    }
     return (
-      <span className="cell-text" onDoubleClick={() => startEdit(i, field)}>
+      <span
+        className={
+          field === "en" && recallOn && revealedSet.has(i)
+            ? "cell-text revealed"
+            : "cell-text"
+        }
+        onDoubleClick={() => startEdit(i, field)}
+      >
         {state === "pending" ? (
           <span className="skeleton" style={{ width: skeletonWidth(i) }} />
         ) : state === "error" ? (
@@ -257,6 +392,14 @@ export default function LyricsView({
         </div>
         <div className="pane-header">
           <span>English</span>
+          <button
+            className={recallOn ? "recall-toggle on" : "recall-toggle"}
+            aria-pressed={recallOn}
+            title="Hide translations until revealed"
+            onClick={toggleRecall}
+          >
+            Recall
+          </button>
           {translation.status === "ready" && (
             <button className="link-button" onClick={onRetranslate}>
               retranslate all

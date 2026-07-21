@@ -323,6 +323,7 @@ export default function App() {
           (lyrics.result.kind === "synced" || lyrics.result.kind === "plain") && (
             <LyricsView
               lyrics={lyrics.result}
+              trackId={playback.trackId}
               english={english}
               translation={translation}
               activeIndex={lyrics.result.kind === "synced" ? activeIndex : -1}
