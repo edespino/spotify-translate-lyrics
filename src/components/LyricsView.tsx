@@ -64,31 +64,31 @@ export default function LyricsView({
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-    const first = container.querySelector<HTMLElement>('[data-row="0"]');
-    const topAnchor = first ? first.offsetTop : 0;
     if (activeIndex < 0) {
-      // No active line yet (intro, or plain unsynced lyrics): anchor the
-      // list at the top so the first line sits at the top of the pane.
-      container.scrollTo({ top: topAnchor, behavior: "auto" });
+      // No active line yet (intro, or plain unsynced lyrics): rest at the
+      // natural top so the first line sits at the top of the pane.
+      container.scrollTo({ top: 0, behavior: "auto" });
       return;
     }
     const row = container.querySelector<HTMLElement>(
       `[data-row="${activeIndex}"]`
     );
     if (!row) return;
-    // Clamp so scrollTop never drops below the top-anchor position: early
-    // active lines highlight in place while the list stays top-anchored;
-    // smooth scrolling engages once a line would sit below the anchor.
+    // row.offsetTop is in the container's scroll space because
+    // .lyrics-scroll is position: relative; scrollTop shares that origin.
+    // Clamp at 0 so early active lines highlight in place while the list
+    // stays top-anchored; smooth scrolling engages once a line would sit
+    // below the anchor.
     container.scrollTo({
       top: Math.max(
-        topAnchor,
+        0,
         row.offsetTop +
           row.offsetHeight / 2 -
           container.clientHeight * ACTIVE_ANCHOR
       ),
       behavior: "smooth",
     });
-  }, [activeIndex]);
+  }, [activeIndex, lyrics]);
 
   // English lyrics: one centered full-width pane, read-only. Same synced
   // scrolling, active-line highlight, and click-to-enlarge as the dual
