@@ -15,6 +15,12 @@ interface Props {
   onRetryTranslation: () => void;
 }
 
+// Fraction of the pane height where the active line is anchored. Upper
+// third (Spotify-like) rather than dead center: the smooth scroll from
+// the top-anchored intro state to the first active line stays short,
+// and more upcoming lines remain visible below the active one.
+const ACTIVE_ANCHOR = 0.32;
+
 interface Row {
   es: string;
   en: string | null;
@@ -60,8 +66,8 @@ export default function LyricsView({
     if (!container) return;
     if (activeIndex < 0) {
       // No active line yet (intro, or plain unsynced lyrics): anchor the
-      // list at the top so the leading 40vh centering spacer is scrolled
-      // past instead of showing as a large gap above the first line.
+      // list at the top so the leading spacer is scrolled past instead
+      // of showing as a large gap above the first line.
       const first = container.querySelector<HTMLElement>('[data-row="0"]');
       if (first) container.scrollTo({ top: first.offsetTop, behavior: "auto" });
       return;
@@ -71,7 +77,10 @@ export default function LyricsView({
     );
     if (!row) return;
     container.scrollTo({
-      top: row.offsetTop - container.clientHeight / 2 + row.offsetHeight / 2,
+      top:
+        row.offsetTop +
+        row.offsetHeight / 2 -
+        container.clientHeight * ACTIVE_ANCHOR,
       behavior: "smooth",
     });
   }, [activeIndex]);

@@ -193,7 +193,11 @@ button.primary:hover {
 .lyrics-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 40vh 0;
+  /* Asymmetric spacers for the 32% active-line anchor: the leading pad
+     only needs to let the first line reach the anchor (and is scrolled
+     past entirely in the top-anchored intro state); the trailing pad
+     must let the last line travel all the way up to it. */
+  padding: 32vh 0 68vh;
   scrollbar-width: thin;
 }
 
