@@ -36,7 +36,7 @@ const body = {
   timesMs: [0, 2000],
 };
 
-describe("translation server", () => {
+describe.sequential("translation server", () => {
   it("cache miss calls the provider exactly once and stores the result", async () => {
     const provider = providerWith(async (lines) =>
       lines.map((l) => `EN:${l}`)
@@ -186,12 +186,18 @@ describe("translation server", () => {
     });
     const app = createApp(provider, dir);
 
-    await request(app).post("/api/translate").send(body);
-    await request(app)
+    const translated = await request(app).post("/api/translate").send(body);
+    expect(translated.status).toBe(200);
+    const edited = await request(app)
       .post("/api/override")
       .send({ trackId: "abc123", lineIndex: 1, field: "es", text: "chao" });
-    await request(app).post("/api/retranslate").send({ trackId: "abc123" });
+    expect(edited.status).toBe(200);
+    const retrans = await request(app)
+      .post("/api/retranslate")
+      .send({ trackId: "abc123" });
+    expect(retrans.status).toBe(200);
     // The title is prepended as the first batch line on every pass.
+    expect(sources).toHaveLength(2);
     expect(sources[1]).toEqual(["Cancion", "hola", "chao"]);
   });
 
@@ -233,10 +239,12 @@ describe("translation server", () => {
     expect(file.lines.map((l: any) => l.en)).toEqual(["EN:hola", "EN:adios"]);
   });
 
-  it("serves a pre-title cache entry without titleEn and without the provider", async () => {
-    const provider = providerWith(async (lines) =>
-      lines.map((l) => `EN:${l}`)
-    );
+  it("backfills titleEn for a pre-title cache entry and persists it", async () => {
+    const sources: string[][] = [];
+    const provider = providerWith(async (lines) => {
+      sources.push(lines);
+      return lines.map((l) => `EN:${l}`);
+    });
     const app = createApp(provider, dir);
     mkdirSync(path.join(dir, "translations"), { recursive: true });
     writeFileSync(
@@ -254,13 +262,115 @@ describe("translation server", () => {
 
     const res = await request(app).post("/api/translate").send(body);
     expect(res.status).toBe(200);
-    expect(res.body.titleEn).toBeUndefined();
+    expect(res.body.titleEn).toBe("EN:Cancion");
     expect(res.body.lines[0].en).toBe("old hello");
-    expect(provider.translate).not.toHaveBeenCalled();
+    expect(provider.translate).toHaveBeenCalledTimes(1);
+    expect(sources).toEqual([["Cancion"]]);
+
+    const file = JSON.parse(
+      readFileSync(path.join(dir, "translations", "abc123.json"), "utf8")
+    );
+    expect(file.titleEn).toBe("EN:Cancion");
+    expect(file.lines).toEqual([
+      { timeMs: 0, es: "hola", en: "old hello" },
+      { timeMs: 2000, es: "adios", en: "old bye" },
+    ]);
 
     const got = await request(app).get("/api/translations/abc123");
     expect(got.status).toBe(200);
-    expect(got.body.titleEn).toBeUndefined();
+    expect(got.body.titleEn).toBe("EN:Cancion");
+    expect(provider.translate).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns cached lyrics when title backfill fails and leaves titleEn absent", async () => {
+    const provider = providerWith(async () => {
+      throw new Error("provider down");
+    });
+    const app = createApp(provider, dir);
+    mkdirSync(path.join(dir, "translations"), { recursive: true });
+    writeFileSync(
+      path.join(dir, "translations", "abc123.json"),
+      JSON.stringify({
+        trackId: "abc123",
+        title: "Cancion",
+        artist: "Artista",
+        lines: [{ timeMs: 0, es: "hola", en: "old hello" }],
+      })
+    );
+
+    const res = await request(app).post("/api/translate").send(body);
+    expect(res.status).toBe(200);
+    expect(res.body.titleEn).toBeUndefined();
+    expect(res.body.lines[0].en).toBe("old hello");
+    expect(provider.translate).toHaveBeenCalledTimes(1);
+
+    const file = JSON.parse(
+      readFileSync(path.join(dir, "translations", "abc123.json"), "utf8")
+    );
+    expect(file.titleEn).toBeUndefined();
+    expect(file.lines[0].en).toBe("old hello");
+  });
+
+  it("does not call the provider for a cached entry with titleEn", async () => {
+    const provider = providerWith(async (lines) =>
+      lines.map((l) => `EN:${l}`)
+    );
+    const app = createApp(provider, dir);
+    mkdirSync(path.join(dir, "translations"), { recursive: true });
+    writeFileSync(
+      path.join(dir, "translations", "abc123.json"),
+      JSON.stringify({
+        trackId: "abc123",
+        title: "Cancion",
+        artist: "Artista",
+        titleEn: "Song",
+        lines: [{ timeMs: 0, es: "hola", en: "old hello" }],
+      })
+    );
+
+    const res = await request(app).post("/api/translate").send(body);
+    expect(res.status).toBe(200);
+    expect(res.body.titleEn).toBe("Song");
+    expect(provider.translate).not.toHaveBeenCalled();
+  });
+
+  it("single-flights concurrent title backfills for the same track", async () => {
+    let resolveTitle: ((value: string[]) => void) | undefined;
+    const provider = providerWith(
+      async (lines) =>
+        new Promise<string[]>((resolve) => {
+          resolveTitle = resolve;
+        }).then(() => lines.map((l) => `EN:${l}`))
+    );
+    const app = createApp(provider, dir);
+    mkdirSync(path.join(dir, "translations"), { recursive: true });
+    writeFileSync(
+      path.join(dir, "translations", "abc123.json"),
+      JSON.stringify({
+        trackId: "abc123",
+        title: "Cancion",
+        artist: "Artista",
+        lines: [{ timeMs: 0, es: "hola", en: "old hello" }],
+      })
+    );
+
+    const responses = Promise.all([
+      request(app).post("/api/translate").send(body),
+      request(app).post("/api/translate").send(body),
+    ]);
+    while (!resolveTitle) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(provider.translate).toHaveBeenCalledTimes(1);
+    resolveTitle([]);
+
+    const [firstRes, secondRes] = await responses;
+    expect(firstRes.status).toBe(200);
+    expect(secondRes.status).toBe(200);
+    expect(firstRes.body.titleEn).toBe("EN:Cancion");
+    expect(secondRes.body.titleEn).toBe("EN:Cancion");
+    expect(provider.translate).toHaveBeenCalledTimes(1);
   });
 
   it("retranslate refreshes titleEn, including on a pre-title cache entry", async () => {

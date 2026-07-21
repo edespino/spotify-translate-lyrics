@@ -207,3 +207,22 @@ export async function translateLinesWithTitle(
   }
   return { titleEn: out[0], en: out.slice(1) };
 }
+
+export async function translateTitle(
+  provider: TranslationProvider,
+  meta: TrackMeta
+): Promise<string> {
+  try {
+    const result = await provider.translate([meta.title], {
+      ...meta,
+      titleFirst: true,
+    });
+    if (result.length !== 1) {
+      throw new TranslationFailedError("Title translation count mismatch");
+    }
+    return result[0];
+  } catch (err) {
+    if (err instanceof TranslationFailedError) throw err;
+    throw new TranslationFailedError("Title translation failed");
+  }
+}

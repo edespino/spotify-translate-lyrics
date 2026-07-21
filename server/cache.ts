@@ -42,6 +42,18 @@ export class TranslationCache {
     await fs.rename(tmp, file);
   }
 
+  async setTitleEn(
+    trackId: string,
+    titleEn: string
+  ): Promise<TranslationEntry | null> {
+    const entry = await this.read(trackId);
+    if (!entry) return null;
+    if (entry.titleEn !== undefined) return entry;
+    entry.titleEn = titleEn;
+    await this.write(entry);
+    return entry;
+  }
+
   async setOverride(
     trackId: string,
     lineIndex: number,
