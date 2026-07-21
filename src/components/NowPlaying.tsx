@@ -1,4 +1,5 @@
 import type { LyricsState, TranslationState } from "../App";
+import { syncBadge } from "./syncStatus";
 import { translatedTitle } from "../translation";
 import type { PlaybackState } from "../types";
 
@@ -11,22 +12,6 @@ interface Props {
   onToggleVocab: () => void;
   settingsOpen: boolean;
   onToggleSettings: () => void;
-}
-
-function lyricsLabel(lyrics: LyricsState): string {
-  if (lyrics.status === "loading") return "finding lyrics";
-  if (lyrics.status === "error") return "lyrics unavailable";
-  if (lyrics.status !== "ready") return "";
-  switch (lyrics.result.kind) {
-    case "synced":
-      return "synced";
-    case "plain":
-      return "unsynced";
-    case "instrumental":
-      return "instrumental";
-    case "none":
-      return "no lyrics";
-  }
 }
 
 function translationLabel(translation: TranslationState): string {
@@ -58,6 +43,7 @@ export default function NowPlaying({
     translation.status === "ready"
       ? translatedTitle(playback.title, translation.entry.titleEn)
       : null;
+  const sync = syncBadge(lyrics);
   return (
     <header className="now-playing">
       {playback.albumArtUrl && (
@@ -72,8 +58,10 @@ export default function NowPlaying({
       </div>
       <div className="status">
         {!playback.isPlaying && <span className="badge">paused</span>}
-        {lyricsLabel(lyrics) && (
-          <span className="badge">{lyricsLabel(lyrics)}</span>
+        {sync && (
+          <span className="badge" title={sync.title}>
+            {sync.label}
+          </span>
         )}
         {translationLabel(translation) && (
           <span className="badge">{translationLabel(translation)}</span>
