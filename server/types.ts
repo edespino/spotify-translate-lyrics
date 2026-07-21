@@ -16,6 +16,13 @@ export interface TranslationEntry {
   lines: TranslationLine[];
 }
 
+export interface GlossEntry {
+  word: string;
+  gloss: string;
+  partOfSpeech: string;
+  note: string;
+}
+
 export interface TrackMeta {
   trackId: string;
   title: string;
@@ -27,4 +34,5 @@ export interface TrackMeta {
 
 export interface TranslationProvider {
   translate(lines: string[], meta: TrackMeta): Promise<string[]>;
+  glossWord(word: string, context: string): Promise<GlossEntry>;
 }

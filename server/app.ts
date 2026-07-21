@@ -1,11 +1,17 @@
 import express from "express";
-import { TranslationCache } from "./cache";
+import {
+  GlossCache,
+  glossCacheKey,
+  normalizeGlossText,
+  TranslationCache,
+} from "./cache";
 import {
   TranslationFailedError,
+  glossWord,
   translateLinesWithTitle,
   translateTitle,
 } from "./translator";
-import type { TranslationEntry, TranslationProvider } from "./types";
+import type { GlossEntry, TranslationEntry, TranslationProvider } from "./types";
 
 const TITLE_BACKFILL_RESPONSE_TIMEOUT_MS = 1500;
 
@@ -13,11 +19,13 @@ export function createApp(provider: TranslationProvider, dataDir: string) {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
   const cache = new TranslationCache(dataDir);
+  const glossCache = new GlossCache(dataDir);
 
   // In-flight requests per track so a double-submit does not call the
   // provider twice.
   const inFlight = new Map<string, Promise<TranslationEntry>>();
   const titleInFlight = new Map<string, Promise<TranslationEntry | null>>();
+  const glossInFlight = new Map<string, Promise<GlossEntry>>();
 
   function hasTranslatedLyrics(entry: TranslationEntry): boolean {
     return entry.lines.some((line) =>
@@ -66,6 +74,17 @@ export function createApp(provider: TranslationProvider, dataDir: string) {
         setTimeout(() => resolve(entry), TITLE_BACKFILL_RESPONSE_TIMEOUT_MS);
       }),
     ]);
+  }
+
+  function containsGlossWord(word: string, context: string): boolean {
+    const normalizedWord = normalizeGlossText(word);
+    if (normalizedWord === "") return false;
+    const normalizedContext = normalizeGlossText(context);
+    const escaped = normalizedWord.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(
+      `(^|[^\\p{L}\\p{N}])${escaped}($|[^\\p{L}\\p{N}])`,
+      "u"
+    ).test(normalizedContext);
   }
 
   app.get("/api/translations/:trackId", async (req, res) => {
@@ -127,6 +146,45 @@ export function createApp(provider: TranslationProvider, dataDir: string) {
     } catch (err: any) {
       const status = err instanceof TranslationFailedError ? 502 : 500;
       res.status(status).json({ error: err?.message || "Translation failed" });
+    }
+  });
+
+  app.post("/api/gloss", async (req, res) => {
+    const { word, context } = req.body ?? {};
+    if (
+      typeof word !== "string" ||
+      typeof context !== "string" ||
+      word.trim() === "" ||
+      context.trim() === "" ||
+      word.length > 64 ||
+      context.length > 500 ||
+      !containsGlossWord(word, context)
+    ) {
+      return res.status(400).json({ error: "Bad gloss request" });
+    }
+
+    const sourceWord = word.trim();
+    const sourceContext = context.trim();
+    const key = glossCacheKey(sourceWord, sourceContext);
+
+    try {
+      const cached = await glossCache.read(key);
+      if (cached) return res.json(cached);
+
+      let pending = glossInFlight.get(key);
+      if (!pending) {
+        pending = (async () => {
+          const entry = await glossWord(provider, sourceWord, sourceContext);
+          await glossCache.write(key, entry);
+          return entry;
+        })();
+        glossInFlight.set(key, pending);
+        pending.finally(() => glossInFlight.delete(key)).catch(() => {});
+      }
+      res.json(await pending);
+    } catch (err: any) {
+      const status = err instanceof TranslationFailedError ? 502 : 500;
+      res.status(status).json({ error: err?.message || "Gloss failed" });
     }
   });
 

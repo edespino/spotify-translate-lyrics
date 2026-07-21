@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
-import type { TranslationEntry } from "./types";
+import type { GlossEntry, TranslationEntry } from "./types";
 
 // Disk cache for translations, one JSON file per track under
 // data/translations/. These files are user data derived from
@@ -152,5 +152,55 @@ export class TranslationCache {
       }
     });
     return entry;
+  }
+}
+
+export function normalizeGlossText(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("en-US")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function glossCacheKey(word: string, context: string): string {
+  return createHash("sha1")
+    .update(`${normalizeGlossText(word)}${normalizeGlossText(context)}`)
+    .digest("hex");
+}
+
+export class GlossCache {
+  private dir: string;
+
+  constructor(dataDir: string) {
+    this.dir = path.join(dataDir, "glosses");
+  }
+
+  private filePath(key: string): string {
+    return path.join(this.dir, `${key}.json`);
+  }
+
+  async read(key: string): Promise<GlossEntry | null> {
+    try {
+      const raw = await fs.readFile(this.filePath(key), "utf8");
+      return JSON.parse(raw) as GlossEntry;
+    } catch (err: any) {
+      if (err?.code === "ENOENT") return null;
+      throw err;
+    }
+  }
+
+  async write(key: string, entry: GlossEntry): Promise<void> {
+    await fs.mkdir(this.dir, { recursive: true });
+    const file = this.filePath(key);
+    const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      await fs.writeFile(tmp, JSON.stringify(entry, null, 2), "utf8");
+      await fs.rename(tmp, file);
+    } catch (err) {
+      await fs.unlink(tmp).catch(() => {});
+      throw err;
+    }
   }
 }
