@@ -7,6 +7,8 @@ interface Props {
   playback: PlaybackState;
   lyrics: LyricsState;
   translation: TranslationState;
+  canMarkWrong: boolean;
+  onMarkWrong: () => void;
   rateLimited: boolean;
   vocabOpen: boolean;
   onToggleVocab: () => void;
@@ -31,6 +33,8 @@ export default function NowPlaying({
   playback,
   lyrics,
   translation,
+  canMarkWrong,
+  onMarkWrong,
   rateLimited,
   vocabOpen,
   onToggleVocab,
@@ -67,6 +71,16 @@ export default function NowPlaying({
           <span className="badge">{translationLabel(translation)}</span>
         )}
         {rateLimited && <span className="badge warn">rate limited</span>}
+        {canMarkWrong && (
+          <button
+            className="mark-wrong-toggle"
+            title="These lyrics are wrong: hide them for this track"
+            data-mark-wrong
+            onClick={onMarkWrong}
+          >
+            Mark wrong
+          </button>
+        )}
         <button
           className={vocabOpen ? "vocab-toggle on" : "vocab-toggle"}
           aria-pressed={vocabOpen}

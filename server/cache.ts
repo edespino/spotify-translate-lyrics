@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import type {
   GlossEntry,
+  MarkedTrack,
   TranslationEntry,
   VocabEntry,
   VocabInput,
@@ -65,6 +66,34 @@ export class TranslationCache {
 
   async write(entry: TranslationEntry): Promise<void> {
     await this.mutate(entry.trackId, () => this.writeUnlocked(entry));
+  }
+
+  // Conditional write for the translate path: the skip check runs
+  // inside the same per-track queue turn as the write, so a mark whose
+  // remove() is already queued cannot have its delete undone by a
+  // translation that finished mid-mark. Returns whether it wrote.
+  async writeUnless(
+    entry: TranslationEntry,
+    skip: () => Promise<boolean>
+  ): Promise<boolean> {
+    return this.mutate(entry.trackId, async () => {
+      if (await skip()) return false;
+      await this.writeUnlocked(entry);
+      return true;
+    });
+  }
+
+  // Deletes the cached translation for a track (used when its lyrics
+  // are marked wrong, so a later reset re-translates fresh). A missing
+  // file is not an error.
+  async remove(trackId: string): Promise<void> {
+    await this.mutate(trackId, async () => {
+      try {
+        await fs.unlink(this.filePath(trackId));
+      } catch (err: any) {
+        if (err?.code !== "ENOENT") throw err;
+      }
+    });
   }
 
   private async writeUnlocked(entry: TranslationEntry): Promise<void> {
@@ -250,6 +279,84 @@ export class VocabStore {
   }
 
   private async writeUnlocked(entries: VocabEntry[]): Promise<void> {
+    await fs.mkdir(this.dir, { recursive: true });
+    const tmp = `${this.file}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      await fs.writeFile(tmp, JSON.stringify(entries, null, 2), "utf8");
+      await fs.rename(tmp, this.file);
+    } catch (err) {
+      await fs.unlink(tmp).catch(() => {});
+      throw err;
+    }
+  }
+}
+
+// Tracks whose LRCLIB lyrics the user marked wrong: one JSON array at
+// data/marked.json. Same pattern as VocabStore: a single file, so all
+// mutations run through one queue with tmp-then-rename writes.
+export class MarkStore {
+  private dir: string;
+  private file: string;
+  private queue: Promise<void> = Promise.resolve();
+
+  constructor(dataDir: string) {
+    this.dir = dataDir;
+    this.file = path.join(dataDir, "marked.json");
+  }
+
+  private mutate<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.queue.catch(() => {}).then(fn);
+    this.queue = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
+  }
+
+  async list(): Promise<MarkedTrack[]> {
+    try {
+      const raw = await fs.readFile(this.file, "utf8");
+      return JSON.parse(raw) as MarkedTrack[];
+    } catch (err: any) {
+      if (err?.code === "ENOENT") return [];
+      throw err;
+    }
+  }
+
+  async get(trackId: string): Promise<MarkedTrack | null> {
+    const entries = await this.list();
+    return entries.find((e) => e.trackId === trackId) ?? null;
+  }
+
+  // Marking an already-marked track updates the record in place (fresh
+  // title/artist/lrclibId) and keeps the original markedAt.
+  async mark(input: Omit<MarkedTrack, "markedAt">): Promise<MarkedTrack> {
+    return this.mutate(async () => {
+      const entries = await this.list();
+      const at = entries.findIndex((e) => e.trackId === input.trackId);
+      const entry: MarkedTrack = {
+        ...input,
+        markedAt: at === -1 ? new Date().toISOString() : entries[at].markedAt,
+      };
+      const next = [...entries];
+      if (at === -1) next.push(entry);
+      else next[at] = entry;
+      await this.writeUnlocked(next);
+      return entry;
+    });
+  }
+
+  async reset(trackId: string): Promise<boolean> {
+    return this.mutate(async () => {
+      const entries = await this.list();
+      const next = entries.filter((e) => e.trackId !== trackId);
+      if (next.length === entries.length) return false;
+      await this.writeUnlocked(next);
+      return true;
+    });
+  }
+
+  private async writeUnlocked(entries: MarkedTrack[]): Promise<void> {
     await fs.mkdir(this.dir, { recursive: true });
     const tmp = `${this.file}.${process.pid}.${randomUUID()}.tmp`;
     try {

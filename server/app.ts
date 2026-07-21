@@ -2,10 +2,12 @@ import express from "express";
 import {
   GlossCache,
   glossCacheKey,
+  MarkStore,
   normalizeGlossText,
   TranslationCache,
   VocabStore,
 } from "./cache";
+import { reportWrongLyrics, type SolveBudget } from "./lrclibFlag";
 import {
   TranslationFailedError,
   glossWord,
@@ -25,16 +27,26 @@ interface AppHooks {
   onGlossInFlightHit?: (key: string) => void;
 }
 
+interface AppOptions {
+  // Overridden by tests so the LRCLIB flag flow talks to a local mock;
+  // the real service is never called from tests.
+  lrclibBaseUrl?: string;
+  flagSolveBudget?: SolveBudget;
+}
+
 export function createApp(
   provider: TranslationProvider,
   dataDir: string,
-  hooks: AppHooks = {}
+  hooks: AppHooks = {},
+  options: AppOptions = {}
 ) {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
   const cache = new TranslationCache(dataDir);
   const glossCache = new GlossCache(dataDir);
   const vocabStore = new VocabStore(dataDir);
+  const markStore = new MarkStore(dataDir);
+  const lrclibBaseUrl = options.lrclibBaseUrl ?? "https://lrclib.net";
 
   // In-flight requests per track so a double-submit does not call the
   // provider twice.
@@ -113,7 +125,8 @@ export function createApp(
   });
 
   app.post("/api/translate", async (req, res) => {
-    const { trackId, title, artist, lines, timesMs } = req.body ?? {};
+    const { trackId, title, artist, lines, timesMs, lrclibId } =
+      req.body ?? {};
     if (
       typeof trackId !== "string" ||
       !Array.isArray(lines) ||
@@ -122,6 +135,11 @@ export function createApp(
       return res.status(400).json({ error: "Bad request" });
     }
     try {
+      // Marked tracks never translate; the client does not call this
+      // while a mark exists, the 409 is a guard.
+      if (await markStore.get(trackId)) {
+        return res.status(409).json({ error: "Lyrics marked wrong" });
+      }
       const cached = await cache.read(trackId);
       if (cached) return res.json(await backfillTitleEnForResponse(cached));
 
@@ -142,13 +160,22 @@ export function createApp(
             title: String(title ?? ""),
             artist: String(artist ?? ""),
             titleEn,
+            ...(typeof lrclibId === "number" ? { lrclibId } : {}),
             lines: lines.map((es: string, i: number) => ({
               timeMs: Array.isArray(timesMs) ? Number(timesMs[i]) || 0 : 0,
               es,
               en: en[i] ?? "",
             })),
           };
-          await cache.write(entry);
+          // Re-check the mark at write time: a mark made while the
+          // provider was running deletes the cache, and this write must
+          // not resurrect it. The client still gets the translation;
+          // it just is not persisted. /api/mark records the mark before
+          // queueing the delete, so a write ordered after the delete
+          // always sees the mark.
+          await cache.writeUnless(entry, async () =>
+            Boolean(await markStore.get(trackId))
+          );
           return entry;
         })();
         inFlight.set(trackId, pending);
@@ -269,6 +296,87 @@ export function createApp(
       res.json({ ok: true });
     } catch {
       res.status(500).json({ error: "Vocab write failed" });
+    }
+  });
+
+  // Wrong-lyrics marks. Marking deletes the cached translation right
+  // away (delete-on-mark), so reset simply re-enters the normal
+  // fetch-and-translate flow with nothing stale to invalidate. The
+  // lrclibId is taken from the request, falling back to the cache entry
+  // being deleted, so the mark record can still flag the LRCLIB entry.
+  app.get("/api/marks", async (_req, res) => {
+    try {
+      res.json(await markStore.list());
+    } catch {
+      res.status(500).json({ error: "Marks read failed" });
+    }
+  });
+
+  app.post("/api/mark", async (req, res) => {
+    const { trackId, title, artist, lrclibId } = req.body ?? {};
+    if (typeof trackId !== "string") {
+      return res.status(400).json({ error: "Bad request" });
+    }
+    try {
+      const cached = await cache.read(trackId);
+      const id =
+        typeof lrclibId === "number" ? lrclibId : cached?.lrclibId;
+      const record = await markStore.mark({
+        trackId,
+        title: String(title ?? cached?.title ?? ""),
+        artist: String(artist ?? cached?.artist ?? ""),
+        ...(typeof id === "number" ? { lrclibId: id } : {}),
+      });
+      await cache.remove(trackId);
+      res.json(record);
+    } catch {
+      res.status(400).json({ error: "Bad track id" });
+    }
+  });
+
+  app.post("/api/mark/reset", async (req, res) => {
+    const { trackId } = req.body ?? {};
+    if (typeof trackId !== "string") {
+      return res.status(400).json({ error: "Bad request" });
+    }
+    try {
+      if (!(await markStore.reset(trackId))) {
+        return res.status(404).json({ error: "Not marked" });
+      }
+      res.json({ ok: true });
+    } catch {
+      res.status(500).json({ error: "Marks write failed" });
+    }
+  });
+
+  // One-shot community flag to LRCLIB: challenge, bounded proof of
+  // work, flag POST. Never retried here; a failure answers 502 once.
+  app.post("/api/mark/report", async (req, res) => {
+    const { trackId } = req.body ?? {};
+    if (typeof trackId !== "string") {
+      return res.status(400).json({ error: "Bad request" });
+    }
+    let record;
+    try {
+      record = await markStore.get(trackId);
+    } catch {
+      return res.status(500).json({ error: "Marks read failed" });
+    }
+    if (!record) return res.status(404).json({ error: "Not marked" });
+    if (typeof record.lrclibId !== "number") {
+      return res
+        .status(409)
+        .json({ error: "No LRCLIB id recorded for this track" });
+    }
+    try {
+      await reportWrongLyrics(
+        lrclibBaseUrl,
+        record.lrclibId,
+        options.flagSolveBudget
+      );
+      res.json({ ok: true });
+    } catch {
+      res.status(502).json({ error: "LRCLIB report failed" });
     }
   });
 

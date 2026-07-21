@@ -19,7 +19,14 @@ export async function fetchTranslationIfNeeded(
       : result.lines.map(() => 0);
   const cached = await getTranslation(track.trackId);
   if (cached) return cached;
-  return requestTranslation(track.trackId, track.title, track.artist, texts, times);
+  return requestTranslation(
+    track.trackId,
+    track.title,
+    track.artist,
+    texts,
+    times,
+    result.lrclibId
+  );
 }
 
 // Translated title to show as secondary text in the header, or null
