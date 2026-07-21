@@ -191,13 +191,18 @@ button.primary:hover {
 }
 
 .lyrics-scroll {
+  /* Positioned so rows resolve their offsetParent here: row.offsetTop is
+     then measured in this container's scroll space, which the scroll
+     effect in LyricsView relies on. Without this, offsets are measured
+     from body and include the header above the pane. */
+  position: relative;
   flex: 1;
   overflow-y: auto;
-  /* Only a trailing spacer: the scroll target is clamped so the list
-     never scrolls above the first line (early active lines highlight in
-     place), so no leading pad is needed; the trailing pad lets the last
-     line travel all the way up to the 32% active-line anchor. */
-  padding: 0 0 68vh;
+  /* Small leading inset so the first line is not cramped against the
+     pane edge at scrollTop 0; the trailing pad lets the last line travel
+     all the way up to the 32% active-line anchor. The scroll target is
+     clamped at 0, so the list never scrolls above the first line. */
+  padding: 16px 0 68vh;
   scrollbar-width: thin;
 }
 
