@@ -14,7 +14,13 @@ import EmptyState from "./components/EmptyState";
 import { lyricsEmptyState } from "./components/stateScreen";
 import LyricsView from "./components/LyricsView";
 import NowPlaying from "./components/NowPlaying";
+import SettingsPanel from "./components/SettingsPanel";
 import VocabPanel from "./components/VocabPanel";
+import {
+  loadAppearance,
+  saveAppearance,
+  type AppearanceSettings,
+} from "./components/settings";
 import { isTypingTarget } from "./components/lyricsRow";
 import {
   insertBySavedAt,
@@ -85,6 +91,17 @@ export default function App() {
   // optimistically on save and delete with rollback on failure.
   const [vocab, setVocab] = useState<VocabEntry[]>([]);
   const [vocabOpen, setVocabOpen] = useState(false);
+
+  // Appearance settings: applied immediately, persisted best-effort.
+  // The two slide-overs share the right edge, so opening one closes the
+  // other.
+  const [appearance, setAppearance] = useState(() => loadAppearance());
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const updateAppearance = useCallback((next: AppearanceSettings) => {
+    setAppearance(next);
+    saveAppearance(next);
+  }, []);
 
   useEffect(() => {
     if (auth !== "loggedIn") return;
@@ -390,7 +407,15 @@ export default function App() {
         translation={translation}
         rateLimited={rateLimited}
         vocabOpen={vocabOpen}
-        onToggleVocab={() => setVocabOpen((open) => !open)}
+        onToggleVocab={() => {
+          setSettingsOpen(false);
+          setVocabOpen((open) => !open);
+        }}
+        settingsOpen={settingsOpen}
+        onToggleSettings={() => {
+          setVocabOpen(false);
+          setSettingsOpen((open) => !open);
+        }}
       />
       <main className="content">
         {empty && (
@@ -435,6 +460,7 @@ export default function App() {
               onReplay={replayLine}
               savedGlossKeys={savedGlossKeys}
               onSaveGloss={saveGlossToVocab}
+              appearance={appearance}
             />
           )}
       </main>
@@ -443,6 +469,13 @@ export default function App() {
           entries={vocab}
           onDelete={removeVocabEntry}
           onClose={() => setVocabOpen(false)}
+        />
+      )}
+      {settingsOpen && (
+        <SettingsPanel
+          settings={appearance}
+          onChange={updateAppearance}
+          onClose={() => setSettingsOpen(false)}
         />
       )}
       {notice && (
