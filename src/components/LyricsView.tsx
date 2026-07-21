@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { TranslationState } from "../App";
 import type { LyricsResult } from "../types";
+import { skeletonWidth } from "./stateScreen";
 import {
   enCellState,
   rowClassName,
@@ -182,7 +183,7 @@ export default function LyricsView({
     return (
       <span className="cell-text" onDoubleClick={() => startEdit(i, field)}>
         {state === "pending" ? (
-          <span className="pending">...</span>
+          <span className="skeleton" style={{ width: skeletonWidth(i) }} />
         ) : state === "error" ? (
           <span className="en-missing">-</span>
         ) : (

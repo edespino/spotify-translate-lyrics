@@ -24,9 +24,9 @@ export function rowClassName(phase: RowPhase, focused: boolean): string {
 
 export type EnCellState = "text" | "pending" | "error";
 
-// A null translation renders pending dots while a translation may still
-// arrive, but a dim placeholder once the translation has failed, so an
-// error never looks like loading.
+// A null translation renders a skeleton bar while a translation may
+// still arrive, but a dim placeholder once the translation has failed,
+// so an error never looks like loading.
 export function enCellState(
   en: string | null,
   translationStatus: string

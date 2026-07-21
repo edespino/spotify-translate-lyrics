@@ -128,13 +128,45 @@ button.primary:hover {
   flex-direction: column;
 }
 
-.panel {
+/* Shared layout for the non-lyric states: art, title, status line,
+   optional action, vertically centered in the lyrics area. */
+.empty-state {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 24px;
+  text-align: center;
+}
+
+.empty-art {
+  width: 200px;
+  height: 200px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+/* Fallback when no artwork URL is available: a dim music-note block,
+   never a broken image. */
+.empty-art.placeholder {
   display: flex;
   align-items: center;
   justify-content: center;
+  background: var(--bg-raised);
   color: var(--text-dim);
-  font-size: 20px;
+  font-size: 64px;
+}
+
+.empty-title {
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.empty-message {
+  color: var(--text-dim);
+  font-size: 16px;
 }
 
 .lyrics-view {
@@ -316,6 +348,21 @@ button.primary:hover {
     display: inline-block;
     animation: note-pulse 1.6s ease-in-out infinite;
   }
+
+  .skeleton {
+    background: linear-gradient(90deg, #2a2a2a 25%, #383838 50%, #2a2a2a 75%);
+    background-size: 200% 100%;
+    animation: skeleton-shimmer 1.6s ease-in-out infinite;
+  }
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
 }
 
 @keyframes note-pulse {
@@ -328,8 +375,21 @@ button.primary:hover {
   }
 }
 
-/* Dim placeholder for a failed translation; distinct from the pending
-   dots so an error never looks like loading. */
+/* EN cell while a translation may still arrive: a skeleton bar whose
+   width varies per row so the column reads as loading content. Static
+   by default; the shimmer is motion and lives in the no-preference
+   media block below. */
+.skeleton {
+  display: inline-block;
+  width: 60%;
+  height: 0.9em;
+  border-radius: 4px;
+  background: #2a2a2a;
+  vertical-align: middle;
+}
+
+/* Dim placeholder for a failed translation; distinct from the loading
+   skeleton so an error never looks like loading. */
 .en-missing {
   color: #555;
   font-weight: 400;
