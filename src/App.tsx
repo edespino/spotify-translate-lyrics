@@ -3,6 +3,8 @@ import { resetOverride, retranslate, saveOverride } from "./api";
 import { isEnglishLyrics, lyricsPlainText, shouldTranslate } from "./detect";
 import { fetchTranslationIfNeeded } from "./translation";
 import { fetchLyrics } from "./lyrics";
+import EmptyState from "./components/EmptyState";
+import { lyricsEmptyState } from "./components/stateScreen";
 import LyricsView from "./components/LyricsView";
 import NowPlaying from "./components/NowPlaying";
 import {
@@ -120,6 +122,26 @@ export default function App() {
     []
   );
 
+  // Shared by the track-change effect and the error screen's Retry
+  // button, so a failed LRCLIB fetch can be retried without waiting for
+  // a track change.
+  const loadLyrics = useCallback(
+    (track: PlaybackState) => {
+      setLyrics({ status: "loading" });
+      fetchLyrics(track.title, track.artist, track.album, track.durationMs)
+        .then((result) => {
+          if (trackIdRef.current !== track.trackId) return;
+          setLyrics({ status: "ready", result });
+          loadTranslation(track, result);
+        })
+        .catch(() => {
+          if (trackIdRef.current !== track.trackId) return;
+          setLyrics({ status: "error" });
+        });
+    },
+    [loadTranslation]
+  );
+
   // Load lyrics and translation when the track changes.
   useEffect(() => {
     const trackId = playback?.trackId ?? null;
@@ -131,19 +153,8 @@ export default function App() {
       setLyrics({ status: "idle" });
       return;
     }
-    setLyrics({ status: "loading" });
-    const track = playback;
-    fetchLyrics(track.title, track.artist, track.album, track.durationMs)
-      .then((result) => {
-        if (trackIdRef.current !== trackId) return;
-        setLyrics({ status: "ready", result });
-        loadTranslation(track, result);
-      })
-      .catch(() => {
-        if (trackIdRef.current !== trackId) return;
-        setLyrics({ status: "error" });
-      });
-  }, [playback, loadTranslation]);
+    loadLyrics(playback);
+  }, [playback, loadLyrics]);
 
   // Recompute the active line every animation frame while synced
   // lyrics are showing.
@@ -199,12 +210,13 @@ export default function App() {
   if (!playback) {
     return (
       <div className="screen">
-        <h1>Nothing playing</h1>
-        <p>Play something on Spotify.</p>
+        <EmptyState title="Nothing playing" message="Play something on Spotify." />
         {rateLimited && <span className="badge">rate limited, polling slower</span>}
       </div>
     );
   }
+
+  const empty = lyricsEmptyState(lyrics);
 
   return (
     <div className="app">
@@ -215,15 +227,22 @@ export default function App() {
         rateLimited={rateLimited}
       />
       <main className="content">
-        {lyrics.status === "loading" && <div className="panel">Looking for lyrics...</div>}
-        {lyrics.status === "error" && (
-          <div className="panel">Could not reach the lyrics service.</div>
-        )}
-        {lyrics.status === "ready" && lyrics.result.kind === "none" && (
-          <div className="panel">No lyrics found for this track.</div>
-        )}
-        {lyrics.status === "ready" && lyrics.result.kind === "instrumental" && (
-          <div className="panel">Instrumental</div>
+        {empty && (
+          <EmptyState
+            artUrl={playback.albumArtUrl || undefined}
+            title={playback.title}
+            message={empty.message}
+            action={
+              empty.retryable ? (
+                <button
+                  className="retry-button"
+                  onClick={() => loadLyrics(playback)}
+                >
+                  Retry
+                </button>
+              ) : undefined
+            }
+          />
         )}
         {lyrics.status === "ready" &&
           (lyrics.result.kind === "synced" || lyrics.result.kind === "plain") && (
