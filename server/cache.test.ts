@@ -1,7 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs";
+import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TranslationCache } from "./cache";
 import type { TranslationEntry } from "./types";
 
@@ -35,6 +36,27 @@ describe("TranslationCache", () => {
   it("round-trips an entry", async () => {
     await cache.write(entry());
     expect(await cache.read("track1")).toEqual(entry());
+  });
+
+  it("cleans up temp files after a failed write", async () => {
+    const realWriteFile = fs.writeFile.bind(fs);
+    const writeFile = vi.spyOn(fs, "writeFile").mockImplementation(
+      async (
+        file: Parameters<typeof fs.writeFile>[0],
+        data: Parameters<typeof fs.writeFile>[1],
+        options?: Parameters<typeof fs.writeFile>[2]
+      ) => {
+        await realWriteFile(file, data, options);
+        throw new Error("disk full");
+      }
+    );
+
+    try {
+      await expect(cache.write(entry())).rejects.toThrow("disk full");
+      expect(await fs.readdir(path.join(dir, "translations"))).toEqual([]);
+    } finally {
+      writeFile.mockRestore();
+    }
   });
 
   it("rejects path traversal track ids", async () => {

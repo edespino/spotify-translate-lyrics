@@ -1,7 +1,13 @@
 import express from "express";
 import { TranslationCache } from "./cache";
-import { TranslationFailedError, translateLinesWithTitle } from "./translator";
+import {
+  TranslationFailedError,
+  translateLinesWithTitle,
+  translateTitle,
+} from "./translator";
 import type { TranslationEntry, TranslationProvider } from "./types";
+
+const TITLE_BACKFILL_RESPONSE_TIMEOUT_MS = 1500;
 
 export function createApp(provider: TranslationProvider, dataDir: string) {
   const app = express();
@@ -11,12 +17,62 @@ export function createApp(provider: TranslationProvider, dataDir: string) {
   // In-flight requests per track so a double-submit does not call the
   // provider twice.
   const inFlight = new Map<string, Promise<TranslationEntry>>();
+  const titleInFlight = new Map<string, Promise<TranslationEntry | null>>();
+
+  function hasTranslatedLyrics(entry: TranslationEntry): boolean {
+    return entry.lines.some((line) =>
+      Object.prototype.hasOwnProperty.call(line, "en")
+    );
+  }
+
+  async function backfillTitleEn(
+    entry: TranslationEntry
+  ): Promise<TranslationEntry> {
+    if (
+      entry.titleEn !== undefined ||
+      entry.title.trim() === "" ||
+      !hasTranslatedLyrics(entry)
+    ) {
+      return entry;
+    }
+
+    let pending = titleInFlight.get(entry.trackId);
+    if (!pending) {
+      pending = (async () => {
+        const titleEn = await translateTitle(provider, {
+          trackId: entry.trackId,
+          title: entry.title,
+          artist: entry.artist,
+        });
+        return cache.setTitleEn(entry.trackId, titleEn);
+      })();
+      titleInFlight.set(entry.trackId, pending);
+      pending.finally(() => titleInFlight.delete(entry.trackId)).catch(() => {});
+    }
+
+    try {
+      return (await pending) ?? entry;
+    } catch {
+      return entry;
+    }
+  }
+
+  async function backfillTitleEnForResponse(
+    entry: TranslationEntry
+  ): Promise<TranslationEntry> {
+    return Promise.race([
+      backfillTitleEn(entry),
+      new Promise<TranslationEntry>((resolve) => {
+        setTimeout(() => resolve(entry), TITLE_BACKFILL_RESPONSE_TIMEOUT_MS);
+      }),
+    ]);
+  }
 
   app.get("/api/translations/:trackId", async (req, res) => {
     try {
       const entry = await cache.read(req.params.trackId);
       if (!entry) return res.status(404).json({ error: "Not cached" });
-      res.json(entry);
+      res.json(await backfillTitleEnForResponse(entry));
     } catch {
       res.status(400).json({ error: "Bad track id" });
     }
@@ -33,7 +89,7 @@ export function createApp(provider: TranslationProvider, dataDir: string) {
     }
     try {
       const cached = await cache.read(trackId);
-      if (cached) return res.json(cached);
+      if (cached) return res.json(await backfillTitleEnForResponse(cached));
 
       let pending = inFlight.get(trackId);
       if (!pending) {
@@ -92,10 +148,13 @@ export function createApp(provider: TranslationProvider, dataDir: string) {
           artist: entry.artist,
         }
       );
-      entry.titleEn = titleEn;
-      cache.applyRetranslation(entry, fresh);
-      await cache.write(entry);
-      res.json(entry);
+      const updated = await cache.applyRetranslationAndWrite(
+        trackId,
+        titleEn,
+        fresh
+      );
+      if (!updated) return res.status(404).json({ error: "Not cached" });
+      res.json(updated);
     } catch (err: any) {
       const status = err instanceof TranslationFailedError ? 502 : 500;
       res.status(status).json({ error: err?.message || "Retranslation failed" });
