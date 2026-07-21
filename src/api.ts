@@ -1,4 +1,4 @@
-import type { TranslationEntry } from "./types";
+import type { TranslationEntry, VocabEntry, VocabInput } from "./types";
 
 // Client for the local translation server. All calls go through the
 // Vite dev proxy at /api.
@@ -55,6 +55,31 @@ export async function resetOverride(
   });
   if (!res.ok) throw new Error(`Server error ${res.status}`);
   return res.json();
+}
+
+export async function listVocab(): Promise<VocabEntry[]> {
+  const res = await fetch("/api/vocab");
+  if (!res.ok) throw new Error(`Server error ${res.status}`);
+  return res.json();
+}
+
+export async function saveVocab(
+  input: VocabInput
+): Promise<{ duplicate: boolean; entry: VocabEntry }> {
+  const res = await fetch("/api/vocab", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error(`Server error ${res.status}`);
+  return res.json();
+}
+
+export async function deleteVocab(id: string): Promise<void> {
+  const res = await fetch(`/api/vocab/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`Server error ${res.status}`);
 }
 
 export async function retranslate(trackId: string): Promise<TranslationEntry> {

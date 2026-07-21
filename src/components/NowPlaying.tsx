@@ -7,6 +7,8 @@ interface Props {
   lyrics: LyricsState;
   translation: TranslationState;
   rateLimited: boolean;
+  vocabOpen: boolean;
+  onToggleVocab: () => void;
 }
 
 function lyricsLabel(lyrics: LyricsState): string {
@@ -43,6 +45,8 @@ export default function NowPlaying({
   lyrics,
   translation,
   rateLimited,
+  vocabOpen,
+  onToggleVocab,
 }: Props) {
   // English songs never reach "ready" (translation stays idle), so the
   // secondary title only appears for translated tracks.
@@ -71,6 +75,15 @@ export default function NowPlaying({
           <span className="badge">{translationLabel(translation)}</span>
         )}
         {rateLimited && <span className="badge warn">rate limited</span>}
+        <button
+          className={vocabOpen ? "vocab-toggle on" : "vocab-toggle"}
+          aria-pressed={vocabOpen}
+          title="Saved vocabulary"
+          data-vocab-toggle
+          onClick={onToggleVocab}
+        >
+          Vocab
+        </button>
       </div>
     </header>
   );

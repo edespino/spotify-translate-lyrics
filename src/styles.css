@@ -241,8 +241,10 @@ button.primary:hover {
   font-weight: 400;
 }
 
-/* Active-recall mode toggle, same pill chrome as the badges. */
-.recall-toggle {
+/* Active-recall mode toggle, same pill chrome as the badges. The Vocab
+   pill in the header shares the exact same visual language. */
+.recall-toggle,
+.vocab-toggle {
   background: none;
   border: 1px solid #333;
   color: var(--text-dim);
@@ -255,17 +257,20 @@ button.primary:hover {
   letter-spacing: normal;
 }
 
-.recall-toggle:hover {
+.recall-toggle:hover,
+.vocab-toggle:hover {
   border-color: var(--text-dim);
   color: var(--text);
 }
 
-.recall-toggle.on {
+.recall-toggle.on,
+.vocab-toggle.on {
   border-color: var(--accent);
   color: var(--accent);
 }
 
-.recall-toggle:focus-visible {
+.recall-toggle:focus-visible,
+.vocab-toggle:focus-visible {
   outline: 2px solid var(--accent);
 }
 
@@ -584,6 +589,35 @@ button.primary:hover {
   color: var(--text-dim);
 }
 
+/* Save affordance inside the gloss popover; flips to a quiet accented
+   "Saved" state once the word is in the vocab list. */
+.gloss-save {
+  margin-top: 8px;
+  background: none;
+  border: 1px solid #333;
+  color: var(--text-dim);
+  border-radius: 12px;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.gloss-save:hover:not(:disabled) {
+  border-color: var(--text-dim);
+  color: var(--text);
+}
+
+.gloss-save.saved {
+  border-color: var(--accent);
+  color: var(--accent);
+  cursor: default;
+}
+
+.gloss-save:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
 .gloss-skeleton {
   width: 90px;
   height: 0.85em;
@@ -647,6 +681,144 @@ button.primary:hover {
   padding: 8px 18px;
   font-size: 14px;
   pointer-events: none;
+}
+
+/* Vocabulary slide-over: fixed to the right edge, above the lyrics but
+   not a modal (no overlay, the lyrics keep scrolling behind it). */
+.vocab-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  width: min(380px, 92vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-raised);
+  border-left: 1px solid #333;
+  box-shadow: -16px 0 40px rgba(0, 0, 0, 0.5);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .vocab-panel {
+    animation: vocab-slide-in 0.2s ease-out;
+  }
+}
+
+@keyframes vocab-slide-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.vocab-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.vocab-panel-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+}
+
+.vocab-action,
+.vocab-close {
+  background: none;
+  border: 1px solid #333;
+  color: var(--text-dim);
+  border-radius: 12px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.vocab-action:hover:not(:disabled),
+.vocab-close:hover {
+  border-color: var(--text-dim);
+  color: var(--text);
+}
+
+.vocab-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.vocab-action:focus-visible,
+.vocab-close:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+.vocab-empty {
+  padding: 24px 16px;
+  color: var(--text-dim);
+  font-size: 14px;
+}
+
+.vocab-list {
+  flex: 1;
+  overflow-y: auto;
+  list-style: none;
+  padding: 12px 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  scrollbar-width: thin;
+}
+
+.vocab-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.vocab-word {
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.vocab-row-head .vocab-delete {
+  margin-left: auto;
+  visibility: hidden;
+}
+
+.vocab-row:hover .vocab-delete,
+.vocab-row:focus-within .vocab-delete {
+  visibility: visible;
+}
+
+.vocab-gloss {
+  font-size: 14px;
+  margin-top: 2px;
+}
+
+.vocab-note {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.vocab-context {
+  font-size: 13px;
+  color: var(--text-dim);
+  font-style: italic;
+  margin-top: 4px;
+}
+
+.vocab-track {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 2px;
 }
 
 .edit-input {

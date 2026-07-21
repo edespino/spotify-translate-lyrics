@@ -1,7 +1,12 @@
 import { promises as fs } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
-import type { GlossEntry, TranslationEntry } from "./types";
+import type {
+  GlossEntry,
+  TranslationEntry,
+  VocabEntry,
+  VocabInput,
+} from "./types";
 
 // Disk cache for translations, one JSON file per track under
 // data/translations/. These files are user data derived from
@@ -170,6 +175,91 @@ export function glossCacheKey(word: string, context: string): string {
       JSON.stringify([normalizeGlossText(word), normalizeGlossText(context)])
     )
     .digest("hex");
+}
+
+// Saved vocabulary: one JSON array at data/vocab.json. Same user-data
+// rules as the translation cache (derived from copyrighted lyrics,
+// never committed). All mutations run through one queue (the store is
+// a single file, so a single shared key) with tmp-then-rename writes.
+export class VocabStore {
+  private dir: string;
+  private file: string;
+  private queue: Promise<void> = Promise.resolve();
+
+  constructor(dataDir: string) {
+    this.dir = dataDir;
+    this.file = path.join(dataDir, "vocab.json");
+  }
+
+  private mutate<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.queue.catch(() => {}).then(fn);
+    this.queue = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
+  }
+
+  // Entries are stored newest first (add prepends), so list is the
+  // response order as-is.
+  async list(): Promise<VocabEntry[]> {
+    try {
+      const raw = await fs.readFile(this.file, "utf8");
+      return JSON.parse(raw) as VocabEntry[];
+    } catch (err: any) {
+      if (err?.code === "ENOENT") return [];
+      throw err;
+    }
+  }
+
+  async add(
+    input: VocabInput
+  ): Promise<{ entry: VocabEntry; duplicate: boolean }> {
+    return this.mutate(async () => {
+      const entries = await this.list();
+      const id = glossCacheKey(input.word, input.contextLine);
+      const at = entries.findIndex((e) => e.id === id);
+      if (at !== -1) {
+        // Duplicate saves update in place: fresh gloss/note/track data
+        // replaces the stored fields, keeping the id, savedAt, and list
+        // position.
+        const entry: VocabEntry = { ...entries[at], ...input, id };
+        const next = [...entries];
+        next[at] = entry;
+        await this.writeUnlocked(next);
+        return { entry, duplicate: true };
+      }
+      const entry: VocabEntry = {
+        id,
+        ...input,
+        savedAt: new Date().toISOString(),
+      };
+      await this.writeUnlocked([entry, ...entries]);
+      return { entry, duplicate: false };
+    });
+  }
+
+  async remove(id: string): Promise<boolean> {
+    return this.mutate(async () => {
+      const entries = await this.list();
+      const next = entries.filter((e) => e.id !== id);
+      if (next.length === entries.length) return false;
+      await this.writeUnlocked(next);
+      return true;
+    });
+  }
+
+  private async writeUnlocked(entries: VocabEntry[]): Promise<void> {
+    await fs.mkdir(this.dir, { recursive: true });
+    const tmp = `${this.file}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      await fs.writeFile(tmp, JSON.stringify(entries, null, 2), "utf8");
+      await fs.rename(tmp, this.file);
+    } catch (err) {
+      await fs.unlink(tmp).catch(() => {});
+      throw err;
+    }
+  }
 }
 
 export class GlossCache {

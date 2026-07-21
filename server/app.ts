@@ -4,6 +4,7 @@ import {
   glossCacheKey,
   normalizeGlossText,
   TranslationCache,
+  VocabStore,
 } from "./cache";
 import {
   TranslationFailedError,
@@ -11,7 +12,12 @@ import {
   translateLinesWithTitle,
   translateTitle,
 } from "./translator";
-import type { GlossEntry, TranslationEntry, TranslationProvider } from "./types";
+import type {
+  GlossEntry,
+  TranslationEntry,
+  TranslationProvider,
+  VocabInput,
+} from "./types";
 
 const TITLE_BACKFILL_RESPONSE_TIMEOUT_MS = 1500;
 
@@ -28,6 +34,7 @@ export function createApp(
   app.use(express.json({ limit: "1mb" }));
   const cache = new TranslationCache(dataDir);
   const glossCache = new GlossCache(dataDir);
+  const vocabStore = new VocabStore(dataDir);
 
   // In-flight requests per track so a double-submit does not call the
   // provider twice.
@@ -197,6 +204,71 @@ export function createApp(
       res.status(status).json({
         error: status === 502 ? "gloss provider failed" : "Gloss failed",
       });
+    }
+  });
+
+  // Vocabulary capture. Length caps mirror the gloss endpoint's spirit:
+  // a word and its lyric-line context are small; anything oversized is a
+  // bad request, not data.
+  const VOCAB_FIELDS: Array<{
+    name: keyof VocabInput;
+    max: number;
+    required: boolean;
+  }> = [
+    { name: "word", max: 64, required: true },
+    { name: "gloss", max: 500, required: true },
+    { name: "contextLine", max: 500, required: true },
+    { name: "partOfSpeech", max: 64, required: false },
+    { name: "note", max: 500, required: false },
+    { name: "trackId", max: 128, required: false },
+    { name: "trackTitle", max: 300, required: false },
+    { name: "artist", max: 300, required: false },
+  ];
+
+  function parseVocabInput(body: unknown): VocabInput | null {
+    const raw = (body ?? {}) as Record<string, unknown>;
+    const input = {} as VocabInput;
+    for (const field of VOCAB_FIELDS) {
+      const value = raw[field.name] ?? "";
+      if (typeof value !== "string" || value.length > field.max) return null;
+      const trimmed = value.trim();
+      if (field.required && trimmed === "") return null;
+      input[field.name] = trimmed;
+    }
+    return input;
+  }
+
+  app.get("/api/vocab", async (_req, res) => {
+    try {
+      res.json(await vocabStore.list());
+    } catch {
+      res.status(500).json({ error: "Vocab read failed" });
+    }
+  });
+
+  app.post("/api/vocab", async (req, res) => {
+    const input = parseVocabInput(req.body);
+    if (!input) return res.status(400).json({ error: "Bad vocab request" });
+    try {
+      const { entry, duplicate } = await vocabStore.add(input);
+      res.json({ duplicate, entry });
+    } catch {
+      res.status(500).json({ error: "Vocab write failed" });
+    }
+  });
+
+  app.delete("/api/vocab/:id", async (req, res) => {
+    const { id } = req.params;
+    if (!/^[0-9a-f]{40}$/.test(id)) {
+      return res.status(400).json({ error: "Bad vocab id" });
+    }
+    try {
+      if (!(await vocabStore.remove(id))) {
+        return res.status(404).json({ error: "Not found" });
+      }
+      res.json({ ok: true });
+    } catch {
+      res.status(500).json({ error: "Vocab write failed" });
     }
   });
 
