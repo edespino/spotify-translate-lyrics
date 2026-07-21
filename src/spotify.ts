@@ -1,7 +1,8 @@
 import type { PlaybackState } from "./types";
 
 const CLIENT_ID = import.meta.env.VITE_SPOTIFY_CLIENT_ID as string;
-const SCOPES = "user-read-currently-playing user-read-playback-state";
+const SCOPES =
+  "user-read-currently-playing user-read-playback-state user-modify-playback-state";
 const TOKEN_KEY = "spotify_tokens";
 const VERIFIER_KEY = "spotify_pkce_verifier";
 const STATE_KEY = "spotify_oauth_state";
@@ -196,4 +197,39 @@ export async function fetchCurrentlyPlaying(): Promise<PlaybackState | null> {
     isPlaying: data.is_playing,
     albumArtUrl: item.album?.images?.[1]?.url || item.album?.images?.[0]?.url || "",
   };
+}
+
+// Thrown when Spotify refuses the seek: 404 means no active device,
+// 403 means the account or playback context does not allow seeking.
+export class SeekUnavailableError extends Error {}
+
+function putSeek(token: string, positionMs: number): Promise<Response> {
+  const params = new URLSearchParams({
+    position_ms: String(Math.max(0, Math.round(positionMs))),
+  });
+  return fetch(`https://api.spotify.com/v1/me/player/seek?${params}`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+// Seeks the active device. Same 401-refresh-and-retry handling as the
+// currently-playing poll; 403/404 surface as SeekUnavailableError so the
+// UI can show a notice instead of crashing.
+export async function seekTo(positionMs: number): Promise<void> {
+  const token = await getAccessToken();
+  let res = await putSeek(token, positionMs);
+  if (res.status === 401) {
+    const fresh = await refreshTokens();
+    res = await putSeek(fresh.accessToken, positionMs);
+    if (res.status === 401) {
+      clearTokens();
+      throw new AuthError("Unauthorized");
+    }
+  }
+  if (res.status === 403 || res.status === 404) {
+    throw new SeekUnavailableError(`Seek unavailable (${res.status})`);
+  }
+  if (res.status === 429) throw new RateLimitError("Rate limited");
+  if (!res.ok) throw new Error(`Spotify error ${res.status}`);
 }

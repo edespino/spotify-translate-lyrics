@@ -87,6 +87,36 @@ describe("PositionTracker", () => {
     expect(t.positionAt(21000)).toBe(11500);
   });
 
+  it("nudge re-anchors immediately at the seek target", () => {
+    const t = new PositionTracker();
+    t.update(60000, true, 0);
+    t.nudge(5000, 1000);
+    expect(t.positionAt(1000)).toBe(5000);
+    expect(t.positionAt(2000)).toBe(6000);
+  });
+
+  it("does not snap back when the follow-up poll agrees with the nudge", () => {
+    const t = new PositionTracker();
+    t.update(60000, true, 0);
+    t.nudge(5000, 1000);
+    // At now=1500 interpolated is 5500; poll says 5400 (within threshold)
+    t.update(5400, true, 1500);
+    expect(t.positionAt(1500)).toBe(5500);
+  });
+
+  it("nudge holds the position while paused", () => {
+    const t = new PositionTracker();
+    t.update(10000, false, 0);
+    t.nudge(2000, 500);
+    expect(t.positionAt(9000)).toBe(2000);
+  });
+
+  it("nudge provides a position even before any poll", () => {
+    const t = new PositionTracker();
+    t.nudge(3000, 0);
+    expect(t.positionAt(1000)).toBe(3000);
+  });
+
   it("returns 0 before any data and after reset", () => {
     const t = new PositionTracker();
     expect(t.positionAt(123)).toBe(0);

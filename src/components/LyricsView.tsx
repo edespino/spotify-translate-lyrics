@@ -4,6 +4,7 @@ import type { LyricsResult } from "../types";
 import { skeletonWidth } from "./stateScreen";
 import {
   enCellState,
+  replayEligible,
   rowClassName,
   rowKeyAction,
   rowPhase,
@@ -21,6 +22,7 @@ interface Props {
   onResetLine: (lineIndex: number, field: Field) => void;
   onRetranslate: () => void;
   onRetryTranslation: () => void;
+  onReplay: (timeMs: number) => void;
 }
 
 // Fraction of the pane height where the active line is anchored. Upper
@@ -55,6 +57,7 @@ export default function LyricsView({
   onResetLine,
   onRetranslate,
   onRetryTranslation,
+  onReplay,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [focusedIndex, setFocusedIndex] = useState(-1);
@@ -66,6 +69,35 @@ export default function LyricsView({
   const sourceTexts =
     lyrics.kind === "synced" ? lyrics.lines.map((l) => l.text) : lyrics.lines;
   const synced = lyrics.kind === "synced";
+  const times =
+    lyrics.kind === "synced" ? lyrics.lines.map((l) => l.timeMs) : null;
+
+  // Timestamp to replay row i from, or null when the row has no replay
+  // affordance (plain lyrics, or an instrumental placeholder line).
+  const replayTime = (i: number): number | null =>
+    times && replayEligible(times[i], sourceTexts[i]) ? times[i] : null;
+
+  const replayButton = (i: number) => {
+    const t = replayTime(i);
+    if (t === null) return null;
+    return (
+      <button
+        className="replay-button"
+        aria-label="replay this line"
+        onClick={(e) => {
+          e.stopPropagation();
+          onReplay(t);
+        }}
+      >
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+          <path
+            d="M8 2a6 6 0 1 1-5.9 7.1h1.7A4.4 4.4 0 1 0 8 3.6V6L3.8 3 8 0v2z"
+            fill="currentColor"
+          />
+        </svg>
+      </button>
+    );
+  };
 
   const rows: Row[] = sourceTexts.map((text, i) => {
     const line = entry?.lines[i];
@@ -140,12 +172,19 @@ export default function LyricsView({
                   onClick={() => toggleFocus(i)}
                   onKeyDown={(e) => {
                     if (e.target !== e.currentTarget) return;
-                    if (rowKeyAction(e.key) === "toggle") {
+                    const action = rowKeyAction(e.key);
+                    if (action === "toggle") {
                       e.preventDefault();
                       toggleFocus(i);
+                    } else if (action === "replay") {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const t = replayTime(i);
+                      if (t !== null) onReplay(t);
                     }
                   }}
                 >
+                  {replayButton(i)}
                   <div className="lyric-cell" lang="en">
                     {text || <span className="note">♪</span>}
                   </div>
@@ -255,9 +294,17 @@ export default function LyricsView({
                   if (!action) return;
                   e.preventDefault();
                   if (action === "toggle") toggleFocus(i);
-                  else startEdit(i, "es");
+                  else if (action === "edit") startEdit(i, "es");
+                  else {
+                    // Stop the global "r" handler from also replaying
+                    // the active line.
+                    e.stopPropagation();
+                    const t = replayTime(i);
+                    if (t !== null) onReplay(t);
+                  }
                 }}
               >
+                {replayButton(i)}
                 <div className="lyric-cell" lang="es">
                   {cell(row, i, "es")}
                 </div>

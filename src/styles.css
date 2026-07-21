@@ -263,11 +263,47 @@ button.primary:hover {
 }
 
 .lyric-row {
+  /* Anchors the absolutely positioned replay button in the row's left
+     padding, outside the two text columns, so column alignment is
+     untouched. */
+  position: relative;
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 24px;
   padding: clamp(10px, 1vh, 16px) 40px;
   cursor: pointer;
+}
+
+/* Hidden until the row is active, hovered, or holds focus (the button
+   itself included, via focus-within), mirroring the reset link. */
+.replay-button {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  visibility: hidden;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 5px;
+  line-height: 0;
+  border-radius: 4px;
+}
+
+.lyric-row.active .replay-button,
+.lyric-row:hover .replay-button,
+.lyric-row:focus-within .replay-button {
+  visibility: visible;
+}
+
+.replay-button:hover {
+  color: var(--text);
+}
+
+.replay-button:focus-visible {
+  outline: 2px solid var(--accent);
+  color: var(--text);
 }
 
 .lyric-row:focus-visible {
@@ -432,6 +468,21 @@ button.primary:hover {
 
 .link-button:hover {
   color: var(--text);
+}
+
+/* Brief non-blocking notice (e.g. replay failed: no active device). */
+.notice {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-raised);
+  color: var(--text);
+  border: 1px solid #333;
+  border-radius: 18px;
+  padding: 8px 18px;
+  font-size: 14px;
+  pointer-events: none;
 }
 
 .edit-input {

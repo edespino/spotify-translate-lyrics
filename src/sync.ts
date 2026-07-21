@@ -42,6 +42,16 @@ export class PositionTracker {
     this.hasData = true;
   }
 
+  // Re-anchors at a locally initiated seek's target so the highlight
+  // snaps at once instead of waiting for the next poll to cross the
+  // drift threshold. The playing flag is untouched; the follow-up poll
+  // reconciles it.
+  nudge(positionMs: number, nowMs: number): void {
+    this.anchorProgressMs = positionMs;
+    this.anchorClockMs = nowMs;
+    this.hasData = true;
+  }
+
   positionAt(nowMs: number): number {
     if (!this.hasData) return 0;
     if (!this.playing) return this.anchorProgressMs;

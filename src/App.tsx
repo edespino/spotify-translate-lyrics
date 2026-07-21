@@ -7,13 +7,16 @@ import EmptyState from "./components/EmptyState";
 import { lyricsEmptyState } from "./components/stateScreen";
 import LyricsView from "./components/LyricsView";
 import NowPlaying from "./components/NowPlaying";
+import { isTypingTarget } from "./components/lyricsRow";
 import {
   AuthError,
   RateLimitError,
+  SeekUnavailableError,
   beginLogin,
   fetchCurrentlyPlaying,
   handleCallback,
   isAuthenticated,
+  seekTo,
 } from "./spotify";
 import { PositionTracker, findActiveLine } from "./sync";
 import type { LyricsResult, PlaybackState, TranslationEntry } from "./types";
@@ -40,8 +43,23 @@ export default function App() {
     status: "idle",
   });
   const [activeIndex, setActiveIndex] = useState(-1);
+  const [notice, setNotice] = useState<string | null>(null);
   const tracker = useRef(new PositionTracker());
   const trackIdRef = useRef<string | null>(null);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined
+  );
+  // Set by the poll effect; lets the seek path trigger an immediate
+  // currently-playing poll to reconcile after a replay.
+  const requestPoll = useRef<() => void>(() => {});
+
+  useEffect(() => () => clearTimeout(noticeTimer.current), []);
+
+  const showNotice = useCallback((message: string) => {
+    clearTimeout(noticeTimer.current);
+    setNotice(message);
+    noticeTimer.current = setTimeout(() => setNotice(null), 4000);
+  }, []);
 
   // Handle the OAuth redirect, then decide the auth state.
   useEffect(() => {
@@ -62,12 +80,15 @@ export default function App() {
   useEffect(() => {
     if (auth !== "loggedIn") return;
     let cancelled = false;
+    let inFlight = false;
     let timer: ReturnType<typeof setTimeout>;
 
     const poll = async () => {
+      inFlight = true;
       let delay = POLL_MS;
       try {
         const state = await fetchCurrentlyPlaying();
+        inFlight = false;
         if (cancelled) return;
         setRateLimited(false);
         if (state) {
@@ -81,6 +102,7 @@ export default function App() {
         }
         setPlayback(state);
       } catch (err) {
+        inFlight = false;
         if (cancelled) return;
         if (err instanceof RateLimitError) {
           setRateLimited(true);
@@ -92,12 +114,42 @@ export default function App() {
       }
       timer = setTimeout(poll, delay);
     };
+    requestPoll.current = () => {
+      if (cancelled || inFlight) return;
+      clearTimeout(timer);
+      poll();
+    };
     poll();
     return () => {
       cancelled = true;
+      requestPoll.current = () => {};
       clearTimeout(timer);
     };
   }, [auth]);
+
+  // Seek Spotify to a line's start, snap the local tracker there, then
+  // poll right away to reconcile. Seek failures (no active device, a
+  // restricted context) surface as a brief notice, never a crash.
+  const replayLine = useCallback(
+    async (timeMs: number) => {
+      try {
+        await seekTo(timeMs);
+        tracker.current.nudge(timeMs, performance.now());
+        requestPoll.current();
+      } catch (err) {
+        if (err instanceof AuthError) {
+          setAuth("loggedOut");
+          return;
+        }
+        showNotice(
+          err instanceof SeekUnavailableError
+            ? "Replay needs an active Spotify device"
+            : "Replay failed"
+        );
+      }
+    },
+    [showNotice]
+  );
 
   const loadTranslation = useCallback(
     async (track: PlaybackState, result: LyricsResult) => {
@@ -183,6 +235,27 @@ export default function App() {
     return () => cancelAnimationFrame(raf);
   }, [syncedLines]);
 
+  // Global "r": replay the current active line. Rows handle their own
+  // "r" (and stop propagation); typing targets are guarded so the edit
+  // input never triggers a seek.
+  useEffect(() => {
+    if (!syncedLines) return;
+    const lines = syncedLines;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "r" || e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (isTypingTarget(target?.tagName, target?.isContentEditable ?? false))
+        return;
+      if (activeIndex < 0) return;
+      const line = lines[activeIndex];
+      if (!line || line.text.trim() === "") return;
+      e.preventDefault();
+      replayLine(line.timeMs);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [syncedLines, activeIndex, replayLine]);
+
   const withEntry = (promise: Promise<TranslationEntry>) =>
     promise
       .then((entry) => setTranslation({ status: "ready", entry }))
@@ -265,9 +338,15 @@ export default function App() {
                 lyrics.status === "ready" &&
                 loadTranslation(playback, lyrics.result)
               }
+              onReplay={replayLine}
             />
           )}
       </main>
+      {notice && (
+        <div className="notice" role="status">
+          {notice}
+        </div>
+      )}
     </div>
   );
 }
