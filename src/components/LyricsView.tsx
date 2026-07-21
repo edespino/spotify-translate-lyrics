@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import type { TranslationState } from "../App";
 import type { LyricsResult } from "../types";
+import {
+  enCellState,
+  rowClassName,
+  rowKeyAction,
+  rowPhase,
+  scrollBehavior,
+} from "./lyricsRow";
 
 type Field = "es" | "en";
 
@@ -28,6 +35,13 @@ interface Row {
   editedEn: boolean;
 }
 
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
 // Both languages render inside one scroll container as grid rows, so
 // the Spanish and English lines always stay vertically aligned and
 // scroll together, one pane per column.
@@ -50,6 +64,7 @@ export default function LyricsView({
   const entry = translation.status === "ready" ? translation.entry : null;
   const sourceTexts =
     lyrics.kind === "synced" ? lyrics.lines.map((l) => l.text) : lyrics.lines;
+  const synced = lyrics.kind === "synced";
 
   const rows: Row[] = sourceTexts.map((text, i) => {
     const line = entry?.lines[i];
@@ -79,16 +94,24 @@ export default function LyricsView({
     // Clamp at 0 so early active lines highlight in place while the list
     // stays top-anchored; smooth scrolling engages once a line would sit
     // below the anchor.
+    const top = Math.max(
+      0,
+      row.offsetTop +
+        row.offsetHeight / 2 -
+        container.clientHeight * ACTIVE_ANCHOR
+    );
     container.scrollTo({
-      top: Math.max(
-        0,
-        row.offsetTop +
-          row.offsetHeight / 2 -
-          container.clientHeight * ACTIVE_ANCHOR
+      top,
+      behavior: scrollBehavior(
+        top - container.scrollTop,
+        container.clientHeight,
+        prefersReducedMotion()
       ),
-      behavior: "smooth",
     });
   }, [activeIndex, lyrics]);
+
+  const toggleFocus = (i: number) =>
+    setFocusedIndex(i === focusedIndex ? -1 : i);
 
   // English lyrics: one centered full-width pane, read-only. Same synced
   // scrolling, active-line highlight, and click-to-enlarge as the dual
@@ -102,23 +125,32 @@ export default function LyricsView({
           </div>
         </div>
         <div className="lyrics-scroll" ref={containerRef}>
-          <div className="lyrics-grid">
-            {sourceTexts.map((text, i) => (
-              <div
-                key={i}
-                data-row={i}
-                className={[
-                  "lyric-row",
-                  lyrics.kind === "synced" && i === activeIndex ? "active" : "",
-                  i === focusedIndex ? "focused" : "",
-                ]
-                  .filter(Boolean)
-                  .join(" ")}
-                onClick={() => setFocusedIndex(i === focusedIndex ? -1 : i)}
-              >
-                <div className="lyric-cell">{text || "♪"}</div>
-              </div>
-            ))}
+          <div className="lyrics-grid" role="list">
+            {sourceTexts.map((text, i) => {
+              const phase = rowPhase(i, activeIndex, synced);
+              return (
+                <div
+                  key={i}
+                  data-row={i}
+                  role="listitem"
+                  tabIndex={0}
+                  aria-current={phase === "active" ? "true" : undefined}
+                  className={rowClassName(phase, i === focusedIndex)}
+                  onClick={() => toggleFocus(i)}
+                  onKeyDown={(e) => {
+                    if (e.target !== e.currentTarget) return;
+                    if (rowKeyAction(e.key) === "toggle") {
+                      e.preventDefault();
+                      toggleFocus(i);
+                    }
+                  }}
+                >
+                  <div className="lyric-cell" lang="en">
+                    {text || <span className="note">♪</span>}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -137,6 +169,7 @@ export default function LyricsView({
       return (
         <EditCell
           initial={text ?? ""}
+          label={`Edit ${field === "es" ? "Spanish" : "English"} line ${i + 1}`}
           onSave={(value) => {
             setEditing(null);
             onEdit(i, field, value);
@@ -145,12 +178,15 @@ export default function LyricsView({
         />
       );
     }
+    const state = field === "en" ? enCellState(row.en, translation.status) : "text";
     return (
       <span className="cell-text" onDoubleClick={() => startEdit(i, field)}>
-        {text === null ? (
+        {state === "pending" ? (
           <span className="pending">...</span>
+        ) : state === "error" ? (
+          <span className="en-missing">-</span>
         ) : (
-          text || "♪"
+          text || <span className="note">♪</span>
         )}
         {edited && (
           <span className="edited-marks">
@@ -188,9 +224,9 @@ export default function LyricsView({
           )}
           {translation.status === "error" && (
             <span className="translation-error">
-              server unavailable{" "}
-              <button className="link-button" onClick={onRetryTranslation}>
-                retry
+              translation failed
+              <button className="retry-button" onClick={onRetryTranslation}>
+                Retry translation
               </button>
             </span>
           )}
@@ -200,24 +236,36 @@ export default function LyricsView({
         </div>
       </div>
       <div className="lyrics-scroll" ref={containerRef}>
-        <div className="lyrics-grid">
-          {rows.map((row, i) => (
-            <div
-              key={i}
-              data-row={i}
-              className={[
-                "lyric-row",
-                lyrics.kind === "synced" && i === activeIndex ? "active" : "",
-                i === focusedIndex ? "focused" : "",
-              ]
-                .filter(Boolean)
-                .join(" ")}
-              onClick={() => setFocusedIndex(i === focusedIndex ? -1 : i)}
-            >
-              <div className="lyric-cell">{cell(row, i, "es")}</div>
-              <div className="lyric-cell">{cell(row, i, "en")}</div>
-            </div>
-          ))}
+        <div className="lyrics-grid" role="list">
+          {rows.map((row, i) => {
+            const phase = rowPhase(i, activeIndex, synced);
+            return (
+              <div
+                key={i}
+                data-row={i}
+                role="listitem"
+                tabIndex={0}
+                aria-current={phase === "active" ? "true" : undefined}
+                className={rowClassName(phase, i === focusedIndex)}
+                onClick={() => toggleFocus(i)}
+                onKeyDown={(e) => {
+                  if (e.target !== e.currentTarget) return;
+                  const action = rowKeyAction(e.key);
+                  if (!action) return;
+                  e.preventDefault();
+                  if (action === "toggle") toggleFocus(i);
+                  else startEdit(i, "es");
+                }}
+              >
+                <div className="lyric-cell" lang="es">
+                  {cell(row, i, "es")}
+                </div>
+                <div className="lyric-cell" lang="en">
+                  {cell(row, i, "en")}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>
@@ -226,10 +274,12 @@ export default function LyricsView({
 
 function EditCell({
   initial,
+  label,
   onSave,
   onCancel,
 }: {
   initial: string;
+  label: string;
   onSave: (value: string) => void;
   onCancel: () => void;
 }) {
@@ -238,6 +288,7 @@ function EditCell({
     <input
       className="edit-input"
       autoFocus
+      aria-label={label}
       value={value}
       onChange={(e) => setValue(e.target.value)}
       onClick={(e) => e.stopPropagation()}

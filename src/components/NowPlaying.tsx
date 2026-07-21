@@ -56,8 +56,10 @@ export default function NowPlaying({
         <img className="album-art" src={playback.albumArtUrl} alt="" />
       )}
       <div className="track-info">
-        <div className="track-title">{playback.title}</div>
-        {titleEn && <div className="track-title-en">{titleEn}</div>}
+        <div className="track-title">
+          {playback.title}
+          {titleEn && <span className="track-title-en">({titleEn})</span>}
+        </div>
         <div className="track-artist">{playback.artist}</div>
       </div>
       <div className="status">
