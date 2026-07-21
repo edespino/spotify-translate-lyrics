@@ -988,3 +988,249 @@ button.primary:hover {
   border-radius: 4px;
   padding: 4px 8px;
 }
+
+/* Quiet external link to the LRCLIB record: badge-shaped but without a
+   border so it reads as metadata, not a control. */
+.source-link {
+  font-size: 12px;
+  color: var(--text-dim);
+  text-decoration: none;
+  align-self: center;
+  white-space: nowrap;
+}
+
+.source-link:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.edit-lyrics-toggle {
+  background: none;
+  border: 1px solid #333;
+  color: var(--text-dim);
+  border-radius: 14px;
+  padding: 3px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.edit-lyrics-toggle:hover {
+  border-color: var(--text-dim);
+  color: var(--text);
+}
+
+.edit-lyrics-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+/* Lyrics correction editor: a full-pane view that replaces the lyrics
+   while open, so the lyric gestures have nothing to fire on. */
+.lyrics-editor {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 40px 24px;
+  gap: 12px;
+}
+
+.editor-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.editor-title-block {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+}
+
+.editor-heading {
+  font-size: 15px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.editor-track {
+  font-size: 15px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-artist {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+.editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.editor-save {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: var(--bg);
+  border-radius: 14px;
+  padding: 5px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.editor-save:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.editor-cancel,
+.editor-restore,
+.editor-tool {
+  background: none;
+  border: 1px solid #555;
+  color: var(--text-dim);
+  border-radius: 14px;
+  padding: 5px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.editor-cancel:hover,
+.editor-restore:hover,
+.editor-tool:hover:not(:disabled) {
+  border-color: var(--text-dim);
+  color: var(--text);
+}
+
+.editor-tool:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.editor-tool.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid #2a2a2a;
+  padding-bottom: 12px;
+}
+
+.editor-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.editor-paste {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.editor-paste-input {
+  width: 100%;
+  min-height: 160px;
+  resize: vertical;
+  font-size: 14px;
+  font-family: inherit;
+  background: var(--bg-raised);
+  color: var(--text);
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.editor-paste-input:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.editor-paste-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.editor-lines {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-right: 8px;
+}
+
+.editor-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+.editor-row.selected {
+  background: var(--bg-raised);
+}
+
+.editor-check {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.editor-time {
+  flex: none;
+  width: 72px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  user-select: none;
+}
+
+.editor-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  font-family: inherit;
+  background: none;
+  color: var(--text);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+
+.editor-text:hover {
+  border-color: #333;
+}
+
+.editor-text:focus-visible {
+  outline: none;
+  background: var(--bg-raised);
+  border-color: var(--accent);
+}
+
+.editor-empty {
+  color: var(--text-dim);
+  font-size: 14px;
+  padding: 16px 6px;
+}

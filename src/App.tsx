@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   deleteVocab,
+  getLyricsOverride,
+  listLyricsOverrides,
   listMarks,
   listVocab,
   markLyrics,
   reportMark,
+  resetLyricsOverride,
   resetMark,
   resetOverride,
   retranslate,
+  saveLyricsOverride,
   saveOverride,
   saveVocab,
   TrackMarkedError,
@@ -27,6 +31,20 @@ import {
   toMarkMap,
   type ReportState,
 } from "./components/markedLyrics";
+import {
+  lrclibSourceUrl,
+  lyricsSourceFor,
+  overrideSummary,
+  overrideToLyricsResult,
+  toOverrideMap,
+  type LyricsSource,
+} from "./components/lyricsOverride";
+import {
+  editorLinesFrom,
+  overrideInput,
+  type EditorLine,
+} from "./components/lyricsEditing";
+import LyricsEditor from "./components/LyricsEditor";
 import LyricsView from "./components/LyricsView";
 import NowPlaying from "./components/NowPlaying";
 import SettingsPanel from "./components/SettingsPanel";
@@ -56,6 +74,7 @@ import {
 } from "./spotify";
 import { PositionTracker, findActiveLine } from "./sync";
 import type {
+  LyricsOverrideSummary,
   LyricsResult,
   MarkedTrack,
   PlaybackState,
@@ -125,6 +144,18 @@ export default function App() {
   marksRef.current = marks;
   const [reportState, setReportState] = useState<ReportState>("idle");
 
+  // Lyric-source overrides: like marks, the summary list loads once per
+  // session and gates lyric loading, so an overridden track never hits
+  // LRCLIB. The ref mirrors the state for loadLyrics, which must not
+  // re-create when overrides change.
+  const [overrides, setOverrides] = useState<
+    Map<string, LyricsOverrideSummary>
+  >(new Map());
+  const [overridesReady, setOverridesReady] = useState(false);
+  const overridesRef = useRef(overrides);
+  overridesRef.current = overrides;
+  const [editorOpen, setEditorOpen] = useState(false);
+
   // Appearance settings: applied immediately, persisted best-effort.
   // The two slide-overs share the right edge, so opening one closes the
   // other.
@@ -151,6 +182,14 @@ export default function App() {
       .catch(() => {})
       .finally(() => {
         if (!cancelled) setMarksReady(true);
+      });
+    listLyricsOverrides()
+      .then((records) => {
+        if (!cancelled) setOverrides(toOverrideMap(records));
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setOverridesReady(true);
       });
     return () => {
       cancelled = true;
@@ -339,12 +378,26 @@ export default function App() {
 
   // Shared by the track-change effect and the error screen's Retry
   // button, so a failed LRCLIB fetch can be retried without waiting for
-  // a track change.
+  // a track change. The pure lyricsSourceFor routing keeps LRCLIB out
+  // of the picture entirely while an override exists; restore forces
+  // the lrclib source because the overrides state has not re-rendered
+  // into the ref yet. A listed override missing its record (deleted on
+  // disk) falls back to LRCLIB: availability over suppression.
   const loadLyrics = useCallback(
-    (track: PlaybackState) => {
+    (track: PlaybackState, source?: LyricsSource) => {
       loadedTrackRef.current = track.trackId;
       setLyrics({ status: "loading" });
-      fetchLyrics(track.title, track.artist, track.album, track.durationMs)
+      const fromLrclib = () =>
+        fetchLyrics(track.title, track.artist, track.album, track.durationMs);
+      const route =
+        source ?? lyricsSourceFor(track.trackId, overridesRef.current);
+      const fetching =
+        route === "override"
+          ? getLyricsOverride(track.trackId).then((record) =>
+              record ? overrideToLyricsResult(record) : fromLrclib()
+            )
+          : fromLrclib();
+      fetching
         .then((result) => {
           if (trackIdRef.current !== track.trackId) return;
           setLyrics({ status: "ready", result });
@@ -372,6 +425,7 @@ export default function App() {
       setLyrics({ status: "idle" });
       setTranslation({ status: "idle" });
       setReportState("idle");
+      setEditorOpen(false);
       clearTimeout(noticeTimer.current);
       setNotice(null);
     }
@@ -379,14 +433,14 @@ export default function App() {
       playback &&
       shouldLoadLyrics(
         trackId,
-        marksReady,
+        marksReady && overridesReady,
         marksRef.current,
         loadedTrackRef.current
       )
     ) {
       loadLyrics(playback);
     }
-  }, [playback, marksReady, loadLyrics]);
+  }, [playback, marksReady, overridesReady, loadLyrics]);
 
   // Covers the two paths the track-change effect cannot: the current
   // track just got marked, and the marks list arriving after the first
@@ -431,6 +485,7 @@ export default function App() {
   useEffect(() => {
     if (!syncedLines) return;
     const lines = syncedLines;
+    if (editorOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "r" || e.metaKey || e.ctrlKey || e.altKey) return;
       const target = e.target as HTMLElement | null;
@@ -444,7 +499,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [syncedLines, activeIndex, replayLine]);
+  }, [syncedLines, activeIndex, replayLine, editorOpen]);
 
   // Mark the current track's lyrics wrong: the server records it and
   // deletes the cached translation, the marks map flips the lyrics area
@@ -492,6 +547,60 @@ export default function App() {
     }
   }, [playback, showNotice]);
 
+  // Save the edited lyrics as the track's source override. The server
+  // stores it, deletes the cached translation, and clears a
+  // wrong-lyrics mark (fixing supersedes suppressing); the client then
+  // shows the override and triggers exactly one fresh translation of
+  // the surviving lines.
+  const saveLyricsEdit = useCallback(
+    async (lines: EditorLine[], lrclibId: number | undefined) => {
+      if (!playback) return;
+      try {
+        const record = await saveLyricsOverride(
+          overrideInput(playback, lines, lrclibId)
+        );
+        setOverrides((prev) =>
+          new Map(prev).set(record.trackId, overrideSummary(record))
+        );
+        setMarks((prev) => {
+          if (!prev.has(record.trackId)) return prev;
+          const next = new Map(prev);
+          next.delete(record.trackId);
+          return next;
+        });
+        setReportState("idle");
+        setEditorOpen(false);
+        const result = overrideToLyricsResult(record);
+        loadedTrackRef.current = record.trackId;
+        setLyrics({ status: "ready", result });
+        loadTranslation(playback, result);
+      } catch {
+        showNotice("Could not save the lyrics");
+      }
+    },
+    [playback, loadTranslation, showNotice]
+  );
+
+  // Restore removes the override and re-enters the normal LRCLIB
+  // fetch-and-translate flow (the server deleted the stale translation
+  // cache). The lrclib source is forced because the overrides state has
+  // not re-rendered into loadLyrics's ref yet.
+  const restoreLyrics = useCallback(async () => {
+    if (!playback) return;
+    try {
+      await resetLyricsOverride(playback.trackId);
+      setOverrides((prev) => {
+        const next = new Map(prev);
+        next.delete(playback.trackId);
+        return next;
+      });
+      setEditorOpen(false);
+      loadLyrics(playback, "lrclib");
+    } catch {
+      showNotice("Could not restore the lyrics");
+    }
+  }, [playback, loadLyrics, showNotice]);
+
   const withEntry = (promise: Promise<TranslationEntry>) =>
     promise
       .then((entry) => setTranslation({ status: "ready", entry }))
@@ -529,6 +638,29 @@ export default function App() {
   const markedRecord = marks.get(playback.trackId);
   const report = markedRecord ? reportSpec(markedRecord, reportState) : null;
 
+  // Best-known LRCLIB id for the source link and the override record:
+  // the loaded lyrics first, then the stored override, then the mark.
+  const lyricResult =
+    lyrics.status === "ready" &&
+    (lyrics.result.kind === "synced" || lyrics.result.kind === "plain")
+      ? lyrics.result
+      : null;
+  const knownLrclibId =
+    lyricResult?.lrclibId ??
+    overrides.get(playback.trackId)?.lrclibId ??
+    markedRecord?.lrclibId;
+  const sourceUrl = lrclibSourceUrl(
+    knownLrclibId,
+    playback.title,
+    playback.artist
+  );
+
+  const openEditor = () => {
+    setVocabOpen(false);
+    setSettingsOpen(false);
+    setEditorOpen(true);
+  };
+
   return (
     <div className="app">
       <NowPlaying
@@ -537,6 +669,9 @@ export default function App() {
         translation={translation}
         canMarkWrong={!markedRecord && canMarkWrong(lyrics)}
         onMarkWrong={markWrong}
+        canEditLyrics={!editorOpen && !markedRecord && canMarkWrong(lyrics)}
+        onEditLyrics={openEditor}
+        sourceUrl={lyricResult || markedRecord ? sourceUrl : null}
         rateLimited={rateLimited}
         vocabOpen={vocabOpen}
         onToggleVocab={() => {
@@ -550,7 +685,20 @@ export default function App() {
         }}
       />
       <main className="content">
-        {markedRecord && report && (
+        {editorOpen && (
+          <LyricsEditor
+            key={playback.trackId}
+            title={playback.title}
+            artist={playback.artist}
+            initialLines={lyricResult ? editorLinesFrom(lyricResult) : []}
+            sourceUrl={sourceUrl}
+            hasOverride={overrides.has(playback.trackId)}
+            onSave={(lines) => saveLyricsEdit(lines, knownLrclibId)}
+            onRestore={restoreLyrics}
+            onCancel={() => setEditorOpen(false)}
+          />
+        )}
+        {!editorOpen && markedRecord && report && (
           <EmptyState
             artUrl={playback.albumArtUrl || undefined}
             title={playback.title}
@@ -568,11 +716,18 @@ export default function App() {
                 >
                   {report.label}
                 </button>
+                <button
+                  className="report-button"
+                  title="Paste corrected lyrics for this track instead of suppressing it"
+                  onClick={openEditor}
+                >
+                  Edit lyrics
+                </button>
               </div>
             }
           />
         )}
-        {!markedRecord && empty && (
+        {!editorOpen && !markedRecord && empty && (
           <EmptyState
             artUrl={playback.albumArtUrl || undefined}
             title={playback.title}
@@ -589,7 +744,8 @@ export default function App() {
             }
           />
         )}
-        {!markedRecord &&
+        {!editorOpen &&
+          !markedRecord &&
           lyrics.status === "ready" &&
           (lyrics.result.kind === "synced" || lyrics.result.kind === "plain") && (
             <LyricsView

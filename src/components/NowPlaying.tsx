@@ -9,6 +9,9 @@ interface Props {
   translation: TranslationState;
   canMarkWrong: boolean;
   onMarkWrong: () => void;
+  canEditLyrics: boolean;
+  onEditLyrics: () => void;
+  sourceUrl: string | null;
   rateLimited: boolean;
   vocabOpen: boolean;
   onToggleVocab: () => void;
@@ -35,6 +38,9 @@ export default function NowPlaying({
   translation,
   canMarkWrong,
   onMarkWrong,
+  canEditLyrics,
+  onEditLyrics,
+  sourceUrl,
   rateLimited,
   vocabOpen,
   onToggleVocab,
@@ -67,10 +73,31 @@ export default function NowPlaying({
             {sync.label}
           </span>
         )}
+        {sourceUrl && (
+          <a
+            className="source-link"
+            href={sourceUrl}
+            target="_blank"
+            rel="noopener"
+            title="View the LRCLIB record these lyrics came from"
+          >
+            LRCLIB
+          </a>
+        )}
         {translationLabel(translation) && (
           <span className="badge">{translationLabel(translation)}</span>
         )}
         {rateLimited && <span className="badge warn">rate limited</span>}
+        {canEditLyrics && (
+          <button
+            className="edit-lyrics-toggle"
+            title="Correct these lyrics: delete or edit lines, or paste a replacement"
+            data-edit-lyrics
+            onClick={onEditLyrics}
+          >
+            Edit lyrics
+          </button>
+        )}
         {canMarkWrong && (
           <button
             className="mark-wrong-toggle"

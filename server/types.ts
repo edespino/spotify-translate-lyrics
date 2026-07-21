@@ -31,6 +31,32 @@ export interface MarkedTrack {
   lrclibId?: number;
 }
 
+// User-corrected lyric source for one track, stored as one JSON file
+// under data/lyricsOverrides/. While a record exists it replaces the
+// LRCLIB entry entirely: the client loads lyrics from it and the
+// translate path reads its lines instead of the request body. Plain
+// (unsynced) overrides store timeMs 0 on every line.
+export interface LyricsOverrideLine {
+  timeMs: number;
+  text: string;
+}
+
+export interface LyricsOverrideRecord {
+  trackId: string;
+  title: string;
+  artist: string;
+  kind: "synced" | "plain";
+  lines: LyricsOverrideLine[];
+  // LRCLIB numeric id of the entry the override replaces, kept so the
+  // source link can point at the exact record.
+  lrclibId?: number;
+  savedAt: string;
+}
+
+// The list endpoint returns records without their lines, enough for the
+// client to route lyric loading without shipping every override body.
+export type LyricsOverrideSummary = Omit<LyricsOverrideRecord, "lines">;
+
 export interface GlossEntry {
   word: string;
   gloss: string;

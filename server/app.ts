@@ -2,6 +2,7 @@ import express from "express";
 import {
   GlossCache,
   glossCacheKey,
+  LyricsOverrideStore,
   MarkStore,
   normalizeGlossText,
   TranslationCache,
@@ -16,6 +17,7 @@ import {
 } from "./translator";
 import type {
   GlossEntry,
+  LyricsOverrideLine,
   TranslationEntry,
   TranslationProvider,
   VocabInput,
@@ -46,6 +48,7 @@ export function createApp(
   const glossCache = new GlossCache(dataDir);
   const vocabStore = new VocabStore(dataDir);
   const markStore = new MarkStore(dataDir);
+  const overrideStore = new LyricsOverrideStore(dataDir);
   const lrclibBaseUrl = options.lrclibBaseUrl ?? "https://lrclib.net";
 
   // In-flight requests per track so a double-submit does not call the
@@ -143,12 +146,27 @@ export function createApp(
       const cached = await cache.read(trackId);
       if (cached) return res.json(await backfillTitleEnForResponse(cached));
 
+      // A lyric-source override replaces the request body as the source
+      // of truth: the client sends the same lines, but substituting here
+      // guarantees a stale or hostile body can never get the LRCLIB
+      // text translated and cached while an override exists.
+      const override = await overrideStore.read(trackId);
+      const srcLines: string[] = override
+        ? override.lines.map((l) => l.text)
+        : lines;
+      const srcTimes: number[] = override
+        ? override.lines.map((l) => l.timeMs)
+        : Array.isArray(timesMs)
+          ? lines.map((_: string, i: number) => Number(timesMs[i]) || 0)
+          : lines.map(() => 0);
+      const srcLrclibId = override?.lrclibId ?? lrclibId;
+
       let pending = inFlight.get(trackId);
       if (!pending) {
         pending = (async () => {
           const { titleEn, en } = await translateLinesWithTitle(
             provider,
-            lines,
+            srcLines,
             {
               trackId,
               title: String(title ?? ""),
@@ -160,22 +178,28 @@ export function createApp(
             title: String(title ?? ""),
             artist: String(artist ?? ""),
             titleEn,
-            ...(typeof lrclibId === "number" ? { lrclibId } : {}),
-            lines: lines.map((es: string, i: number) => ({
-              timeMs: Array.isArray(timesMs) ? Number(timesMs[i]) || 0 : 0,
+            ...(typeof srcLrclibId === "number"
+              ? { lrclibId: srcLrclibId }
+              : {}),
+            lines: srcLines.map((es: string, i: number) => ({
+              timeMs: srcTimes[i] ?? 0,
               es,
               en: en[i] ?? "",
             })),
           };
-          // Re-check the mark at write time: a mark made while the
-          // provider was running deletes the cache, and this write must
-          // not resurrect it. The client still gets the translation;
-          // it just is not persisted. /api/mark records the mark before
-          // queueing the delete, so a write ordered after the delete
-          // always sees the mark.
-          await cache.writeUnless(entry, async () =>
-            Boolean(await markStore.get(trackId))
-          );
+          // Re-check the mark and the override at write time: a mark
+          // made while the provider was running deletes the cache, and
+          // this write must not resurrect it; likewise an override saved
+          // (or removed) mid-translation makes this result stale. The
+          // client still gets the translation; it just is not persisted.
+          // /api/mark and /api/lyrics-override both record before
+          // queueing their cache delete, so a write ordered after the
+          // delete always sees the change.
+          await cache.writeUnless(entry, async () => {
+            if (await markStore.get(trackId)) return true;
+            const current = await overrideStore.read(trackId);
+            return (current?.savedAt ?? null) !== (override?.savedAt ?? null);
+          });
           return entry;
         })();
         inFlight.set(trackId, pending);
@@ -377,6 +401,96 @@ export function createApp(
       res.json({ ok: true });
     } catch {
       res.status(502).json({ error: "LRCLIB report failed" });
+    }
+  });
+
+  // Lyric-source overrides. Saving replaces LRCLIB as the track's lyric
+  // source, deletes the cached translation (so the next translate call
+  // is exactly one fresh provider run over the corrected lines), and
+  // clears a wrong-lyrics mark if one exists: fixing supersedes
+  // suppressing. Restore removes the override and deletes the cache so
+  // the normal LRCLIB fetch-and-translate flow re-enters cleanly.
+  const OVERRIDE_MAX_LINES = 2000;
+  const OVERRIDE_MAX_LINE_LENGTH = 500;
+
+  function parseOverrideLines(raw: unknown): LyricsOverrideLine[] | null {
+    if (!Array.isArray(raw) || raw.length === 0) return null;
+    if (raw.length > OVERRIDE_MAX_LINES) return null;
+    const lines: LyricsOverrideLine[] = [];
+    for (const item of raw) {
+      const { timeMs, text } = (item ?? {}) as Record<string, unknown>;
+      if (typeof text !== "string" || text.length > OVERRIDE_MAX_LINE_LENGTH) {
+        return null;
+      }
+      if (typeof timeMs !== "number" || !Number.isFinite(timeMs) || timeMs < 0) {
+        return null;
+      }
+      lines.push({ timeMs, text });
+    }
+    return lines;
+  }
+
+  app.get("/api/lyrics-overrides", async (_req, res) => {
+    try {
+      res.json(await overrideStore.list());
+    } catch {
+      res.status(500).json({ error: "Overrides read failed" });
+    }
+  });
+
+  app.get("/api/lyrics-overrides/:trackId", async (req, res) => {
+    try {
+      const record = await overrideStore.read(req.params.trackId);
+      if (!record) return res.status(404).json({ error: "Not overridden" });
+      res.json(record);
+    } catch {
+      res.status(400).json({ error: "Bad track id" });
+    }
+  });
+
+  app.post("/api/lyrics-override", async (req, res) => {
+    const { trackId, title, artist, kind, lines, lrclibId } = req.body ?? {};
+    const parsedLines = parseOverrideLines(lines);
+    if (
+      typeof trackId !== "string" ||
+      (kind !== "synced" && kind !== "plain") ||
+      !parsedLines
+    ) {
+      return res.status(400).json({ error: "Bad request" });
+    }
+    try {
+      const cached = await cache.read(trackId);
+      const id =
+        typeof lrclibId === "number" ? lrclibId : cached?.lrclibId;
+      const record = await overrideStore.save({
+        trackId,
+        title: String(title ?? cached?.title ?? ""),
+        artist: String(artist ?? cached?.artist ?? ""),
+        kind,
+        lines: parsedLines,
+        ...(typeof id === "number" ? { lrclibId: id } : {}),
+      });
+      await cache.remove(trackId);
+      await markStore.reset(trackId);
+      res.json(record);
+    } catch {
+      res.status(400).json({ error: "Bad track id" });
+    }
+  });
+
+  app.post("/api/lyrics-override/reset", async (req, res) => {
+    const { trackId } = req.body ?? {};
+    if (typeof trackId !== "string") {
+      return res.status(400).json({ error: "Bad request" });
+    }
+    try {
+      if (!(await overrideStore.remove(trackId))) {
+        return res.status(404).json({ error: "Not overridden" });
+      }
+      await cache.remove(trackId);
+      res.json({ ok: true });
+    } catch {
+      res.status(400).json({ error: "Bad track id" });
     }
   });
 

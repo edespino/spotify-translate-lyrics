@@ -53,6 +53,29 @@ export interface MarkedTrack {
   lrclibId?: number;
 }
 
+// User-corrected lyric source for one track, as stored by the server.
+// While a record exists the app loads the track's lyrics from it and
+// never consults LRCLIB. Plain (unsynced) overrides store timeMs 0 on
+// every line.
+export interface LyricsOverrideLine {
+  timeMs: number;
+  text: string;
+}
+
+export interface LyricsOverrideRecord {
+  trackId: string;
+  title: string;
+  artist: string;
+  kind: "synced" | "plain";
+  lines: LyricsOverrideLine[];
+  lrclibId?: number;
+  savedAt: string;
+}
+
+// The list endpoint returns records without their lines, enough to
+// route lyric loading without shipping every override body.
+export type LyricsOverrideSummary = Omit<LyricsOverrideRecord, "lines">;
+
 // One saved vocabulary word, as stored by the server. The id is the
 // sha1 of the normalized word+context pair and doubles as the dedupe
 // key; savedAt is an ISO timestamp stamped by the server.

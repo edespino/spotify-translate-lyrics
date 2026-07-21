@@ -1,4 +1,6 @@
 import type {
+  LyricsOverrideRecord,
+  LyricsOverrideSummary,
   MarkedTrack,
   TranslationEntry,
   VocabEntry,
@@ -138,6 +140,49 @@ export async function resetMark(trackId: string): Promise<void> {
 
 export async function reportMark(trackId: string): Promise<void> {
   const res = await fetch("/api/mark/report", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ trackId }),
+  });
+  if (!res.ok) throw new Error(`Server error ${res.status}`);
+}
+
+// Lyric-source overrides: the server stores the corrected lyrics,
+// deletes the cached translation, and clears a wrong-lyrics mark, so
+// saving re-enters the translate flow with exactly one provider call.
+export type SaveLyricsOverrideInput = Omit<LyricsOverrideRecord, "savedAt">;
+
+export async function listLyricsOverrides(): Promise<LyricsOverrideSummary[]> {
+  const res = await fetch("/api/lyrics-overrides");
+  if (!res.ok) throw new Error(`Server error ${res.status}`);
+  return res.json();
+}
+
+export async function getLyricsOverride(
+  trackId: string
+): Promise<LyricsOverrideRecord | null> {
+  const res = await fetch(
+    `/api/lyrics-overrides/${encodeURIComponent(trackId)}`
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Server error ${res.status}`);
+  return res.json();
+}
+
+export async function saveLyricsOverride(
+  input: SaveLyricsOverrideInput
+): Promise<LyricsOverrideRecord> {
+  const res = await fetch("/api/lyrics-override", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error(`Server error ${res.status}`);
+  return res.json();
+}
+
+export async function resetLyricsOverride(trackId: string): Promise<void> {
+  const res = await fetch("/api/lyrics-override/reset", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ trackId }),

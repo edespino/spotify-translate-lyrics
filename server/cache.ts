@@ -3,6 +3,8 @@ import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import type {
   GlossEntry,
+  LyricsOverrideRecord,
+  LyricsOverrideSummary,
   MarkedTrack,
   TranslationEntry,
   VocabEntry,
@@ -362,6 +364,125 @@ export class MarkStore {
     try {
       await fs.writeFile(tmp, JSON.stringify(entries, null, 2), "utf8");
       await fs.rename(tmp, this.file);
+    } catch (err) {
+      await fs.unlink(tmp).catch(() => {});
+      throw err;
+    }
+  }
+}
+
+// User-corrected lyric sources: one JSON file per track under
+// data/lyricsOverrides/, mirroring TranslationCache (override bodies are
+// full lyric texts with a per-track lifecycle; a single array file would
+// rewrite every track's lyrics on each save). Same per-track mutation
+// queue and tmp-then-rename writes. Same user-data rules: derived from
+// copyrighted lyrics, never committed.
+export class LyricsOverrideStore {
+  private dir: string;
+  private mutations = new Map<string, Promise<void>>();
+
+  constructor(dataDir: string) {
+    this.dir = path.join(dataDir, "lyricsOverrides");
+  }
+
+  private filePath(trackId: string): string {
+    return path.join(this.dir, `${safeId(trackId)}.json`);
+  }
+
+  private async mutate<T>(
+    trackId: string,
+    fn: () => Promise<T>
+  ): Promise<T> {
+    const id = safeId(trackId);
+    const previous = this.mutations.get(id) ?? Promise.resolve();
+    const run = previous.catch(() => {}).then(fn);
+    const next = run.then(
+      () => undefined,
+      () => undefined
+    );
+    this.mutations.set(id, next);
+    next
+      .finally(() => {
+        if (this.mutations.get(id) === next) {
+          this.mutations.delete(id);
+        }
+      })
+      .catch(() => {});
+    return run;
+  }
+
+  async read(trackId: string): Promise<LyricsOverrideRecord | null> {
+    try {
+      const raw = await fs.readFile(this.filePath(trackId), "utf8");
+      return JSON.parse(raw) as LyricsOverrideRecord;
+    } catch (err: any) {
+      if (err?.code === "ENOENT") return null;
+      throw err;
+    }
+  }
+
+  async list(): Promise<LyricsOverrideSummary[]> {
+    let names: string[];
+    try {
+      names = await fs.readdir(this.dir);
+    } catch (err: any) {
+      if (err?.code === "ENOENT") return [];
+      throw err;
+    }
+    const out: LyricsOverrideSummary[] = [];
+    for (const name of names) {
+      if (!name.endsWith(".json")) continue;
+      const record = await this.read(name.slice(0, -5)).catch(() => null);
+      if (!record) continue;
+      out.push({
+        trackId: record.trackId,
+        title: record.title,
+        artist: record.artist,
+        kind: record.kind,
+        ...(typeof record.lrclibId === "number"
+          ? { lrclibId: record.lrclibId }
+          : {}),
+        savedAt: record.savedAt,
+      });
+    }
+    return out;
+  }
+
+  // savedAt is always freshly stamped: the translate path uses it to
+  // detect an override saved while the provider was running, so a
+  // re-save must never look identical to the record it replaced.
+  async save(
+    input: Omit<LyricsOverrideRecord, "savedAt">
+  ): Promise<LyricsOverrideRecord> {
+    return this.mutate(input.trackId, async () => {
+      const record: LyricsOverrideRecord = {
+        ...input,
+        savedAt: new Date().toISOString(),
+      };
+      await this.writeUnlocked(record);
+      return record;
+    });
+  }
+
+  async remove(trackId: string): Promise<boolean> {
+    return this.mutate(trackId, async () => {
+      try {
+        await fs.unlink(this.filePath(trackId));
+        return true;
+      } catch (err: any) {
+        if (err?.code === "ENOENT") return false;
+        throw err;
+      }
+    });
+  }
+
+  private async writeUnlocked(record: LyricsOverrideRecord): Promise<void> {
+    await fs.mkdir(this.dir, { recursive: true });
+    const file = this.filePath(record.trackId);
+    const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      await fs.writeFile(tmp, JSON.stringify(record, null, 2), "utf8");
+      await fs.rename(tmp, file);
     } catch (err) {
       await fs.unlink(tmp).catch(() => {});
       throw err;
