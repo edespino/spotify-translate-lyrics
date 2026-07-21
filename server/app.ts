@@ -15,7 +15,15 @@ import type { GlossEntry, TranslationEntry, TranslationProvider } from "./types"
 
 const TITLE_BACKFILL_RESPONSE_TIMEOUT_MS = 1500;
 
-export function createApp(provider: TranslationProvider, dataDir: string) {
+interface AppHooks {
+  onGlossInFlightHit?: (key: string) => void;
+}
+
+export function createApp(
+  provider: TranslationProvider,
+  dataDir: string,
+  hooks: AppHooks = {}
+) {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
   const cache = new TranslationCache(dataDir);
@@ -180,11 +188,15 @@ export function createApp(provider: TranslationProvider, dataDir: string) {
         })();
         glossInFlight.set(key, pending);
         pending.finally(() => glossInFlight.delete(key)).catch(() => {});
+      } else {
+        hooks.onGlossInFlightHit?.(key);
       }
       res.json(await pending);
     } catch (err: any) {
       const status = err instanceof TranslationFailedError ? 502 : 500;
-      res.status(status).json({ error: err?.message || "Gloss failed" });
+      res.status(status).json({
+        error: status === 502 ? "gloss provider failed" : "Gloss failed",
+      });
     }
   });
 

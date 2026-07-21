@@ -144,6 +144,33 @@ describe("validateGlossEntry", () => {
       })
     ).toThrow(GlossShapeError);
   });
+
+  it("rejects overlong gloss response fields", () => {
+    expect(() =>
+      validateGlossEntry({
+        word: "a".repeat(65),
+        gloss: "light",
+        partOfSpeech: "noun",
+        note: "",
+      })
+    ).toThrow(GlossShapeError);
+    expect(() =>
+      validateGlossEntry({
+        word: "luz",
+        gloss: "a".repeat(121),
+        partOfSpeech: "noun",
+        note: "",
+      })
+    ).toThrow(GlossShapeError);
+    expect(() =>
+      validateGlossEntry({
+        word: "luz",
+        gloss: "light",
+        partOfSpeech: "noun",
+        note: "a".repeat(201),
+      })
+    ).toThrow(GlossShapeError);
+  });
 });
 
 describe("parseGlossResponse", () => {

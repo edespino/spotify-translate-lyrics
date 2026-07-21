@@ -47,6 +47,13 @@ function providerWithGloss(
   };
 }
 
+function postGloss(app: ReturnType<typeof createApp>, payload: unknown) {
+  return request(app)
+    .post("/api/gloss")
+    .type("json")
+    .send(JSON.stringify(payload));
+}
+
 const glossEntry = (word = "corazon"): GlossEntry => ({
   word,
   gloss: "heart",
@@ -568,9 +575,10 @@ describe.sequential("translation server", () => {
     const provider = providerWithGloss(async (word) => glossEntry(word));
     const app = createApp(provider, dir);
 
-    const res = await request(app)
-      .post("/api/gloss")
-      .send({ word: "corazon", context: "Mi corazon late por ti" });
+    const res = await postGloss(app, {
+      word: "corazon",
+      context: "Mi corazon late por ti",
+    });
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual(glossEntry("corazon"));
@@ -611,9 +619,10 @@ describe.sequential("translation server", () => {
       })
     );
 
-    const res = await request(app)
-      .post("/api/gloss")
-      .send({ word: "cancion", context: "Esta cancion me cura" });
+    const res = await postGloss(app, {
+      word: "cancion",
+      context: "Esta cancion me cura",
+    });
 
     expect(res.status).toBe(200);
     expect(res.body.gloss).toBe("song");
@@ -629,12 +638,13 @@ describe.sequential("translation server", () => {
     }));
     const app = createApp(provider, dir);
 
-    const res = await request(app)
-      .post("/api/gloss")
-      .send({ word: "luz", context: "Dame luz en la noche" });
+    const res = await postGloss(app, {
+      word: "luz",
+      context: "Dame luz en la noche",
+    });
 
     expect(res.status).toBe(502);
-    expect(res.body.error).toMatch(/malformed/);
+    expect(res.body.error).toBe("gloss provider failed");
     expect(provider.glossWord).toHaveBeenCalledTimes(2);
     await expect(
       fs.readFile(
@@ -650,16 +660,17 @@ describe.sequential("translation server", () => {
 
   it("returns 502 for gloss provider failure and caches nothing", async () => {
     const provider = providerWithGloss(async () => {
-      throw new Error("provider down");
+      throw new Error("provider down https://example.invalid?key=secret");
     });
     const app = createApp(provider, dir);
 
-    const res = await request(app)
-      .post("/api/gloss")
-      .send({ word: "luz", context: "Dame luz en la noche" });
+    const res = await postGloss(app, {
+      word: "luz",
+      context: "Dame luz en la noche",
+    });
 
     expect(res.status).toBe(502);
-    expect(res.body.error).toBe("provider down");
+    expect(res.body.error).toBe("gloss provider failed");
     await expect(
       fs.readFile(
         path.join(
@@ -676,9 +687,10 @@ describe.sequential("translation server", () => {
     const provider = providerWithGloss(async (word) => glossEntry(word));
     const app = createApp(provider, dir);
 
-    const res = await request(app)
-      .post("/api/gloss")
-      .send({ word: "corazon", context: "Mi corazo\u0301n late por ti" });
+    const res = await postGloss(app, {
+      word: "corazon",
+      context: "Mi corazo\u0301n late por ti",
+    });
 
     expect(res.status).toBe(200);
     expect(provider.glossWord).toHaveBeenCalledTimes(1);
@@ -700,34 +712,44 @@ describe.sequential("translation server", () => {
       { word: "hola", context: oversizedContext },
       { word: "adios", context: "hola mundo" },
     ]) {
-      const res = await request(app).post("/api/gloss").send(payload);
+      const res = await postGloss(app, payload);
       expect(res.status).toBe(400);
     }
   });
 
   it("dedupes concurrent identical gloss requests", async () => {
-    let releaseGloss: ((value: GlossEntry) => void) | undefined;
+    let resolveProviderCalled: (() => void) | undefined;
+    const providerCalled = new Promise<void>((resolve) => {
+      resolveProviderCalled = resolve;
+    });
+    let releaseGloss!: (value: GlossEntry) => void;
+    let resolveInFlightHit: (() => void) | undefined;
+    const inFlightHit = new Promise<void>((resolve) => {
+      resolveInFlightHit = resolve;
+    });
     const provider = providerWithGloss(
       async () =>
         new Promise<GlossEntry>((resolve) => {
           releaseGloss = resolve;
+          resolveProviderCalled?.();
         })
     );
-    const app = createApp(provider, dir);
+    const app = createApp(provider, dir, {
+      onGlossInFlightHit: () => resolveInFlightHit?.(),
+    });
 
-    const responses = Promise.all([
-      request(app)
-        .post("/api/gloss")
-        .send({ word: "suena", context: "La calle suena fuerte" }),
-      request(app)
-        .post("/api/gloss")
-        .send({ word: "suena", context: "La calle suena fuerte" }),
-    ]);
-    while (!releaseGloss) {
-      await new Promise((resolve) => setTimeout(resolve, 1));
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    const first = postGloss(app, {
+      word: "suena",
+      context: "La calle suena fuerte",
+    }).then((res) => res);
+    await providerCalled;
     expect(provider.glossWord).toHaveBeenCalledTimes(1);
+
+    const second = postGloss(app, {
+      word: "suena",
+      context: "La calle suena fuerte",
+    }).then((res) => res);
+    await inFlightHit;
     releaseGloss({
       word: "suena",
       gloss: "sounds",
@@ -735,7 +757,7 @@ describe.sequential("translation server", () => {
       note: "",
     });
 
-    const [firstRes, secondRes] = await responses;
+    const [firstRes, secondRes] = await Promise.all([first, second]);
     expect(firstRes.status).toBe(200);
     expect(secondRes.status).toBe(200);
     expect(firstRes.body).toEqual(secondRes.body);

@@ -166,7 +166,9 @@ export function normalizeGlossText(value: string): string {
 
 export function glossCacheKey(word: string, context: string): string {
   return createHash("sha1")
-    .update(`${normalizeGlossText(word)}${normalizeGlossText(context)}`)
+    .update(
+      JSON.stringify([normalizeGlossText(word), normalizeGlossText(context)])
+    )
     .digest("hex");
 }
 

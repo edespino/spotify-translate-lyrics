@@ -199,9 +199,7 @@ async function callGlossProvider(
       if (err instanceof TranslationFailedError) throw err;
       if (err instanceof GlossShapeError) return null;
       if (!isRateLimitError(err)) {
-        throw new TranslationFailedError(
-          err instanceof Error ? err.message : "Gloss provider failed"
-        );
+        throw new TranslationFailedError("Gloss provider failed");
       }
       if (attempt >= MAX_RATE_LIMIT_RETRIES) {
         throw new TranslationFailedError(

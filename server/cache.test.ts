@@ -41,6 +41,28 @@ describe("GlossCache", () => {
     expect(await glossCache.read(key)).toEqual(entry);
   });
 
+  it("keeps formerly ambiguous word and context pairs distinct", async () => {
+    const firstKey = glossCacheKey("a", "aaa a");
+    const secondKey = glossCacheKey("aa", "aa a");
+    expect(firstKey).not.toBe(secondKey);
+
+    await glossCache.write(firstKey, {
+      word: "a",
+      gloss: "first",
+      partOfSpeech: "noun",
+      note: "",
+    });
+    await glossCache.write(secondKey, {
+      word: "aa",
+      gloss: "second",
+      partOfSpeech: "noun",
+      note: "",
+    });
+
+    expect((await glossCache.read(firstKey))?.gloss).toBe("first");
+    expect((await glossCache.read(secondKey))?.gloss).toBe("second");
+  });
+
   it("returns null for a missing gloss", async () => {
     expect(await glossCache.read(glossCacheKey("luz", "dame luz"))).toBeNull();
   });

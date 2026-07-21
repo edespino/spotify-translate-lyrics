@@ -42,6 +42,10 @@ const PARTS_OF_SPEECH = new Set([
   "phrase",
 ]);
 
+const MAX_GLOSS_WORD_CHARS = 64;
+const MAX_GLOSS_CHARS = 120;
+const MAX_GLOSS_NOTE_CHARS = 200;
+
 export class GlossShapeError extends Error {}
 
 export function parseGlossResponse(raw: string): GlossEntry {
@@ -98,6 +102,15 @@ export function validateGlossEntry(value: unknown): GlossEntry {
   }
   if (entry.word.trim() === "") {
     throw new GlossShapeError("Provider gloss response has empty word");
+  }
+  if (entry.word.length > MAX_GLOSS_WORD_CHARS) {
+    throw new GlossShapeError("Provider gloss response has long word");
+  }
+  if (entry.gloss.length > MAX_GLOSS_CHARS) {
+    throw new GlossShapeError("Provider gloss response has long gloss");
+  }
+  if (entry.note.length > MAX_GLOSS_NOTE_CHARS) {
+    throw new GlossShapeError("Provider gloss response has long note");
   }
   if (entry.gloss.trim().split(/\s+/).length > 6) {
     throw new GlossShapeError("Provider gloss response has long gloss");
