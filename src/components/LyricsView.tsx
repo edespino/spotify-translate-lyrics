@@ -1,6 +1,22 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { TranslationState } from "../App";
 import type { LyricsResult } from "../types";
+import { GlossInvalidError, fetchGloss, isAbortError } from "../gloss";
+import {
+  GLOSS_ERROR_MS,
+  GLOSS_GAP,
+  GLOSS_HOVER_MS,
+  glossEligible,
+  glossHoverStep,
+  type GlossHoverEvent,
+  glossPopoverNext,
+  glossPopoverPosition,
+  isGlossClick,
+  segmentLine,
+  type GlossAnchor,
+  type GlossPopoverEvent,
+  type GlossPopoverState,
+} from "./gloss";
 import { skeletonWidth } from "./stateScreen";
 import {
   enCellState,
@@ -89,6 +105,161 @@ export default function LyricsView({
     indices: ReadonlySet<number>;
     tail: number | null;
   } | null>(null);
+
+  // Word gloss popover: hover a Spanish word (or alt-click it) for a
+  // concise English gloss of that word in its line. One popover at a
+  // time; the anchor is in the scroll container's coordinate space so
+  // the popover scrolls with the lyrics. Timers: hover delay before
+  // opening, a short grace period when leaving word or popover (so the
+  // pointer can travel between them), and the brief error notice.
+  const [gloss, setGloss] = useState<{
+    state: NonNullable<GlossPopoverState>;
+    anchor: GlossAnchor;
+  } | null>(null);
+  const glossAbortRef = useRef<AbortController | null>(null);
+  const glossPopoverRef = useRef<HTMLDivElement>(null);
+  const hoverTimerRef = useRef<number | null>(null);
+  const leaveTimerRef = useRef<number | null>(null);
+  const errorTimerRef = useRef<number | null>(null);
+
+  const clearTimer = (ref: { current: number | null }) => {
+    if (ref.current !== null) {
+      window.clearTimeout(ref.current);
+      ref.current = null;
+    }
+  };
+
+  const applyGlossEvent = (event: GlossPopoverEvent) =>
+    setGloss((g) => {
+      const next = glossPopoverNext(g?.state ?? null, event);
+      if (next === null) return null;
+      if (!g || next === g.state) return g;
+      return { ...g, state: next };
+    });
+
+  const dismissGloss = () => {
+    glossAbortRef.current?.abort();
+    glossAbortRef.current = null;
+    clearTimer(hoverTimerRef);
+    clearTimer(leaveTimerRef);
+    clearTimer(errorTimerRef);
+    setGloss(null);
+  };
+
+  const openGloss = (word: string, context: string, el: HTMLElement) => {
+    const container = containerRef.current;
+    if (!container || !el.isConnected) return;
+    clearTimer(hoverTimerRef);
+    clearTimer(leaveTimerRef);
+    clearTimer(errorTimerRef);
+    glossAbortRef.current?.abort();
+    const controller = new AbortController();
+    glossAbortRef.current = controller;
+    const cRect = container.getBoundingClientRect();
+    const rect = el.getBoundingClientRect();
+    const anchor: GlossAnchor = {
+      left: rect.left - cRect.left + container.scrollLeft,
+      top: rect.top - cRect.top + container.scrollTop,
+      bottom: rect.bottom - cRect.top + container.scrollTop,
+    };
+    setGloss({ state: { status: "loading", word, context }, anchor });
+    fetchGloss(word, context, controller.signal).then(
+      (entry) => applyGlossEvent({ type: "loaded", word, context, entry }),
+      (err) => {
+        if (isAbortError(err)) return;
+        if (err instanceof GlossInvalidError) {
+          applyGlossEvent({ type: "invalid", word, context });
+          return;
+        }
+        applyGlossEvent({ type: "failed", word, context });
+        errorTimerRef.current = window.setTimeout(() => {
+          errorTimerRef.current = null;
+          setGloss((g) => (g && g.state.status === "error" ? null : g));
+        }, GLOSS_ERROR_MS);
+      }
+    );
+  };
+
+  // Pointer choreography (which timers start and stop on each enter and
+  // leave) is the pure glossHoverStep mapping; this just executes its
+  // actions against the two timer refs.
+  const runHoverStep = (
+    event: GlossHoverEvent,
+    open?: { word: string; context: string; el: HTMLElement }
+  ) => {
+    const actions = glossHoverStep(event);
+    if (actions.cancelOpen) clearTimer(hoverTimerRef);
+    if (actions.cancelLeave) clearTimer(leaveTimerRef);
+    if (actions.startOpen && open) {
+      hoverTimerRef.current = window.setTimeout(() => {
+        hoverTimerRef.current = null;
+        openGloss(open.word, open.context, open.el);
+      }, GLOSS_HOVER_MS);
+    }
+    if (actions.startLeave) {
+      leaveTimerRef.current = window.setTimeout(() => {
+        leaveTimerRef.current = null;
+        dismissGloss();
+      }, 120);
+    }
+  };
+
+  const wordEnter = (word: string, context: string, el: HTMLElement) =>
+    runHoverStep(
+      {
+        type: "enterWord",
+        sameAsOpen:
+          gloss !== null &&
+          gloss.state.word === word &&
+          gloss.state.context === context,
+      },
+      { word, context, el }
+    );
+
+  const wordLeave = () =>
+    runHoverStep({ type: "leaveWord", popoverOpen: gloss !== null });
+
+  // Escape and scrolling the lyrics container both dismiss the popover.
+  const glossOpen = gloss !== null;
+  useEffect(() => {
+    if (!glossOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") dismissGloss();
+    };
+    const container = containerRef.current;
+    window.addEventListener("keydown", onKey);
+    container?.addEventListener("scroll", dismissGloss);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      container?.removeEventListener("scroll", dismissGloss);
+    };
+  }, [glossOpen]);
+
+  // Track change dismisses the popover (and cancels its pending fetch).
+  useEffect(() => {
+    return () => dismissGloss();
+  }, [trackId]);
+
+  // Position with the popover's real size once it is in the DOM: below
+  // the word, flipped above when the bottom of the pane is too close,
+  // clamped inside the container. useLayoutEffect runs before paint, so
+  // the initial anchor-based style is never visible.
+  useLayoutEffect(() => {
+    const node = glossPopoverRef.current;
+    const container = containerRef.current;
+    if (!node || !container || !gloss) return;
+    const pos = glossPopoverPosition(
+      gloss.anchor,
+      { width: node.offsetWidth, height: node.offsetHeight },
+      {
+        scrollTop: container.scrollTop,
+        clientWidth: container.clientWidth,
+        clientHeight: container.clientHeight,
+      }
+    );
+    node.style.left = `${pos.left}px`;
+    node.style.top = `${pos.top}px`;
+  }, [gloss]);
 
   const revealedSet = activeReveals(reveals, trackId);
   const tailIndex =
@@ -280,6 +451,9 @@ export default function LyricsView({
 
   const startEdit = (index: number, field: Field) => {
     if (field === "en" && rows[index].en === null) return;
+    // The edit input replaces the word spans, so any popover anchored to
+    // them (a double-clicked gloss word) goes too.
+    dismissGloss();
     setEditing({ index, field });
   };
 
@@ -360,6 +534,13 @@ export default function LyricsView({
           <span className="skeleton" style={{ width: skeletonWidth(i) }} />
         ) : state === "error" ? (
           <span className="en-missing">-</span>
+        ) : glossEligible(english, field, false, text ?? "") ? (
+          <GlossableLine
+            text={text ?? ""}
+            onWordEnter={wordEnter}
+            onWordLeave={wordLeave}
+            onWordAltClick={openGloss}
+          />
         ) : (
           text || <span className="note">♪</span>
         )}
@@ -458,8 +639,87 @@ export default function LyricsView({
             );
           })}
         </div>
+        {gloss && (
+          <div
+            className="gloss-popover"
+            role="tooltip"
+            ref={glossPopoverRef}
+            style={{
+              left: gloss.anchor.left,
+              top: gloss.anchor.bottom + GLOSS_GAP,
+            }}
+            onMouseEnter={() => runHoverStep({ type: "enterPopover" })}
+            onMouseLeave={() => runHoverStep({ type: "leavePopover" })}
+          >
+            {gloss.state.status === "loading" ? (
+              <span className="skeleton gloss-skeleton" />
+            ) : gloss.state.status === "error" ? (
+              <span className="gloss-missing">no gloss available</span>
+            ) : (
+              <>
+                <div className="gloss-head">
+                  <span className="gloss-term" lang="es">
+                    {gloss.state.entry.word}
+                  </span>
+                  {gloss.state.entry.partOfSpeech && (
+                    <span className="gloss-pos">
+                      {gloss.state.entry.partOfSpeech}
+                    </span>
+                  )}
+                </div>
+                <div className="gloss-def">{gloss.state.entry.gloss}</div>
+                {gloss.state.entry.note && (
+                  <div className="gloss-note">{gloss.state.entry.note}</div>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
     </div>
+  );
+}
+
+// A Spanish line rendered as its exact text, with each word wrapped in
+// an inline span that is a gloss hover and alt-click target. Word spans
+// are not in the tab order (rows already carry focus semantics; gloss
+// is pointer-first). Plain click and double-click bubble to the row's
+// enlarge and edit behavior; only alt-click is claimed.
+function GlossableLine({
+  text,
+  onWordEnter,
+  onWordLeave,
+  onWordAltClick,
+}: {
+  text: string;
+  onWordEnter: (word: string, context: string, el: HTMLElement) => void;
+  onWordLeave: () => void;
+  onWordAltClick: (word: string, context: string, el: HTMLElement) => void;
+}) {
+  const tokens = useMemo(() => segmentLine(text), [text]);
+  return (
+    <>
+      {tokens.map((token, k) =>
+        token.isWord ? (
+          <span
+            key={k}
+            className="gloss-word"
+            onMouseEnter={(e) => onWordEnter(token.text, text, e.currentTarget)}
+            onMouseLeave={onWordLeave}
+            onClick={(e) => {
+              if (!isGlossClick(e.altKey, e.metaKey, e.ctrlKey)) return;
+              e.preventDefault();
+              e.stopPropagation();
+              onWordAltClick(token.text, text, e.currentTarget);
+            }}
+          >
+            {token.text}
+          </span>
+        ) : (
+          <Fragment key={k}>{token.text}</Fragment>
+        )
+      )}
+    </>
   );
 }
 

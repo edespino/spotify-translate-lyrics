@@ -513,6 +513,88 @@ button.primary:hover {
   }
 }
 
+/* Gloss word targets: visually nothing until hovered, so the line
+   renders exactly as plain text; the hover underline is the only hint.
+   Inline, inherits everything, no padding or margin: text flow and
+   wrapping are identical to the raw string. */
+.gloss-word {
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 4px;
+}
+
+.gloss-word:hover {
+  text-decoration-color: var(--text-dim);
+}
+
+/* Gloss popover: a small dark card absolutely positioned inside
+   .lyrics-scroll, so it scrolls with the lyrics. Text is selectable
+   (it is a learning aid, copying the gloss out is expected). */
+.gloss-popover {
+  position: absolute;
+  z-index: 2;
+  max-width: 280px;
+  background: var(--bg-raised);
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 10px 14px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.45;
+  text-align: left;
+  cursor: auto;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.gloss-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.gloss-term {
+  font-weight: 700;
+}
+
+.gloss-pos {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 1px 7px;
+}
+
+.gloss-def {
+  color: var(--text);
+}
+
+.gloss-note {
+  margin-top: 4px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.gloss-missing {
+  color: var(--text-dim);
+}
+
+.gloss-skeleton {
+  width: 90px;
+  height: 0.85em;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .gloss-word {
+    transition: text-decoration-color 0.15s ease;
+  }
+}
+
 .edited-marks {
   margin-left: 8px;
   font-size: 13px;
