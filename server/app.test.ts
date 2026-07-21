@@ -11,7 +11,8 @@ import path from "node:path";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "./app";
-import type { TranslationProvider } from "./types";
+import { glossCacheKey } from "./cache";
+import type { GlossEntry, TranslationProvider } from "./types";
 
 let dir: string;
 
@@ -26,8 +27,39 @@ afterEach(() => {
 function providerWith(
   impl: (lines: string[]) => Promise<string[]>
 ): TranslationProvider {
-  return { translate: vi.fn(impl) };
+  return {
+    translate: vi.fn(impl),
+    glossWord: vi.fn(async (word) => ({
+      word,
+      gloss: "meaning",
+      partOfSpeech: "noun",
+      note: "",
+    })),
+  };
 }
+
+function providerWithGloss(
+  impl: (word: string, context: string) => Promise<unknown>
+): TranslationProvider {
+  return {
+    translate: vi.fn(async (lines: string[]) => lines),
+    glossWord: vi.fn(impl) as TranslationProvider["glossWord"],
+  };
+}
+
+function postGloss(app: ReturnType<typeof createApp>, payload: unknown) {
+  return request(app)
+    .post("/api/gloss")
+    .type("json")
+    .send(JSON.stringify(payload));
+}
+
+const glossEntry = (word = "corazon"): GlossEntry => ({
+  word,
+  gloss: "heart",
+  partOfSpeech: "noun",
+  note: "",
+});
 
 const body = {
   trackId: "abc123",
@@ -537,5 +569,198 @@ describe.sequential("translation server", () => {
     expect(
       (await request(app).get("/api/translations/..%2Fescape")).status
     ).toBe(400);
+  });
+
+  it("returns a word gloss and writes it to the cache", async () => {
+    const provider = providerWithGloss(async (word) => glossEntry(word));
+    const app = createApp(provider, dir);
+
+    const res = await postGloss(app, {
+      word: "corazon",
+      context: "Mi corazon late por ti",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(glossEntry("corazon"));
+    expect(provider.glossWord).toHaveBeenCalledTimes(1);
+    expect(provider.glossWord).toHaveBeenCalledWith(
+      "corazon",
+      "Mi corazon late por ti"
+    );
+
+    const file = JSON.parse(
+      readFileSync(
+        path.join(
+          dir,
+          "glosses",
+          `${glossCacheKey("corazon", "Mi corazon late por ti")}.json`
+        ),
+        "utf8"
+      )
+    );
+    expect(file).toEqual(glossEntry("corazon"));
+  });
+
+  it("serves a cached gloss without calling the provider", async () => {
+    const provider = providerWithGloss(async (word) => glossEntry(word));
+    const app = createApp(provider, dir);
+    mkdirSync(path.join(dir, "glosses"), { recursive: true });
+    writeFileSync(
+      path.join(
+        dir,
+        "glosses",
+        `${glossCacheKey("cancion", "Esta cancion me cura")}.json`
+      ),
+      JSON.stringify({
+        word: "cancion",
+        gloss: "song",
+        partOfSpeech: "noun",
+        note: "",
+      })
+    );
+
+    const res = await postGloss(app, {
+      word: "cancion",
+      context: "Esta cancion me cura",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.gloss).toBe("song");
+    expect(provider.glossWord).not.toHaveBeenCalled();
+  });
+
+  it("retries malformed gloss output once, then returns 502 and caches nothing", async () => {
+    const provider = providerWithGloss(async () => ({
+      word: "luz",
+      gloss: 5,
+      partOfSpeech: "noun",
+      note: "",
+    }));
+    const app = createApp(provider, dir);
+
+    const res = await postGloss(app, {
+      word: "luz",
+      context: "Dame luz en la noche",
+    });
+
+    expect(res.status).toBe(502);
+    expect(res.body.error).toBe("gloss provider failed");
+    expect(provider.glossWord).toHaveBeenCalledTimes(2);
+    await expect(
+      fs.readFile(
+        path.join(
+          dir,
+          "glosses",
+          `${glossCacheKey("luz", "Dame luz en la noche")}.json`
+        ),
+        "utf8"
+      )
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("returns 502 for gloss provider failure and caches nothing", async () => {
+    const provider = providerWithGloss(async () => {
+      throw new Error("provider down https://example.invalid?key=secret");
+    });
+    const app = createApp(provider, dir);
+
+    const res = await postGloss(app, {
+      word: "luz",
+      context: "Dame luz en la noche",
+    });
+
+    expect(res.status).toBe(502);
+    expect(res.body.error).toBe("gloss provider failed");
+    await expect(
+      fs.readFile(
+        path.join(
+          dir,
+          "glosses",
+          `${glossCacheKey("luz", "Dame luz en la noche")}.json`
+        ),
+        "utf8"
+      )
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("matches gloss words case-insensitively and accent-insensitively", async () => {
+    const provider = providerWithGloss(async (word) => glossEntry(word));
+    const app = createApp(provider, dir);
+
+    const res = await postGloss(app, {
+      word: "corazon",
+      context: "Mi corazo\u0301n late por ti",
+    });
+
+    expect(res.status).toBe(200);
+    expect(provider.glossWord).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects invalid gloss requests with 400", async () => {
+    const app = createApp(
+      providerWithGloss(async (word) => glossEntry(word)),
+      dir
+    );
+    const oversizedWord = "a".repeat(65);
+    const oversizedContext = "b".repeat(501);
+
+    for (const payload of [
+      {},
+      { word: "", context: "hola" },
+      { word: "hola", context: "" },
+      { word: oversizedWord, context: oversizedWord },
+      { word: "hola", context: oversizedContext },
+      { word: "adios", context: "hola mundo" },
+    ]) {
+      const res = await postGloss(app, payload);
+      expect(res.status).toBe(400);
+    }
+  });
+
+  it("dedupes concurrent identical gloss requests", async () => {
+    let resolveProviderCalled: (() => void) | undefined;
+    const providerCalled = new Promise<void>((resolve) => {
+      resolveProviderCalled = resolve;
+    });
+    let releaseGloss!: (value: GlossEntry) => void;
+    let resolveInFlightHit: (() => void) | undefined;
+    const inFlightHit = new Promise<void>((resolve) => {
+      resolveInFlightHit = resolve;
+    });
+    const provider = providerWithGloss(
+      async () =>
+        new Promise<GlossEntry>((resolve) => {
+          releaseGloss = resolve;
+          resolveProviderCalled?.();
+        })
+    );
+    const app = createApp(provider, dir, {
+      onGlossInFlightHit: () => resolveInFlightHit?.(),
+    });
+
+    const first = postGloss(app, {
+      word: "suena",
+      context: "La calle suena fuerte",
+    }).then((res) => res);
+    await providerCalled;
+    expect(provider.glossWord).toHaveBeenCalledTimes(1);
+
+    const second = postGloss(app, {
+      word: "suena",
+      context: "La calle suena fuerte",
+    }).then((res) => res);
+    await inFlightHit;
+    releaseGloss({
+      word: "suena",
+      gloss: "sounds",
+      partOfSpeech: "verb",
+      note: "",
+    });
+
+    const [firstRes, secondRes] = await Promise.all([first, second]);
+    expect(firstRes.status).toBe(200);
+    expect(secondRes.status).toBe(200);
+    expect(firstRes.body).toEqual(secondRes.body);
+    expect(provider.glossWord).toHaveBeenCalledTimes(1);
   });
 });

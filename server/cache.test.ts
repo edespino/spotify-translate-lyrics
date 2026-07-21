@@ -3,11 +3,12 @@ import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { TranslationCache } from "./cache";
+import { GlossCache, glossCacheKey, TranslationCache } from "./cache";
 import type { TranslationEntry } from "./types";
 
 let dir: string;
 let cache: TranslationCache;
+let glossCache: GlossCache;
 
 const entry = (): TranslationEntry => ({
   trackId: "track1",
@@ -22,6 +23,49 @@ const entry = (): TranslationEntry => ({
 beforeEach(() => {
   dir = mkdtempSync(path.join(tmpdir(), "cache-test-"));
   cache = new TranslationCache(dir);
+  glossCache = new GlossCache(dir);
+});
+
+describe("GlossCache", () => {
+  it("round-trips a gloss entry by normalized key", async () => {
+    const key = glossCacheKey("Corazon", "Mi corazon late");
+    expect(key).toBe(glossCacheKey("corazon", "mi corazon late"));
+
+    const entry = {
+      word: "Corazon",
+      gloss: "heart",
+      partOfSpeech: "noun",
+      note: "",
+    };
+    await glossCache.write(key, entry);
+    expect(await glossCache.read(key)).toEqual(entry);
+  });
+
+  it("keeps formerly ambiguous word and context pairs distinct", async () => {
+    const firstKey = glossCacheKey("a", "aaa a");
+    const secondKey = glossCacheKey("aa", "aa a");
+    expect(firstKey).not.toBe(secondKey);
+
+    await glossCache.write(firstKey, {
+      word: "a",
+      gloss: "first",
+      partOfSpeech: "noun",
+      note: "",
+    });
+    await glossCache.write(secondKey, {
+      word: "aa",
+      gloss: "second",
+      partOfSpeech: "noun",
+      note: "",
+    });
+
+    expect((await glossCache.read(firstKey))?.gloss).toBe("first");
+    expect((await glossCache.read(secondKey))?.gloss).toBe("second");
+  });
+
+  it("returns null for a missing gloss", async () => {
+    expect(await glossCache.read(glossCacheKey("luz", "dame luz"))).toBeNull();
+  });
 });
 
 afterEach(() => {

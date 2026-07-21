@@ -1,6 +1,11 @@
 import { GoogleGenAI } from "@google/genai";
-import type { TrackMeta, TranslationProvider } from "./types";
-import { parseTranslationResponse } from "./validate";
+import type { GlossEntry, TrackMeta, TranslationProvider } from "./types";
+import {
+  GlossShapeError,
+  parseGlossResponse,
+  parseTranslationResponse,
+  validateGlossEntry,
+} from "./validate";
 
 export const DEFAULT_MODEL = "gemini-flash-lite-latest";
 
@@ -38,6 +43,21 @@ function buildPrompt(lines: string[], meta: TrackMeta): string {
   ].join("\n");
 }
 
+function buildGlossPrompt(word: string, context: string): string {
+  return [
+    "Gloss one word from a Spanish lyric line for an English language learner.",
+    "Return the meaning of the word as used in the line, not every dictionary meaning.",
+    "Output ONLY one JSON object with exactly these string fields:",
+    '{"word":"...","gloss":"...","partOfSpeech":"...","note":"..."}',
+    "gloss must be concise English, 1 to 6 words.",
+    "partOfSpeech must be one of: noun, verb, adj, adv, pron, prep, conj, interj, phrase.",
+    'note must be a short idiom or usage note, or "" if none.',
+    "",
+    `Word: ${JSON.stringify(word)}`,
+    `Lyric line: ${JSON.stringify(context)}`,
+  ].join("\n");
+}
+
 export class GeminiProvider implements TranslationProvider {
   private client: GoogleGenAI;
   private model: string;
@@ -63,6 +83,33 @@ export class GeminiProvider implements TranslationProvider {
       }
       throw err;
     }
+  }
+
+  async glossWord(word: string, context: string): Promise<GlossEntry> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const response = await this.client.models.generateContent({
+          model: this.model,
+          contents: buildGlossPrompt(word, context),
+          config: { responseMimeType: "application/json" },
+        });
+        return parseGlossResponse(response.text ?? "");
+      } catch (err) {
+        if (isModelNotFoundError(err)) {
+          throw new TranslationFailedError(
+            `Gemini model "${this.model}" is unavailable. Set GEMINI_MODEL to a supported Gemini model, for example ${DEFAULT_MODEL}.`
+          );
+        }
+        if (err instanceof GlossShapeError) {
+          if (attempt === 0) continue;
+          throw new TranslationFailedError(
+            "Gloss provider returned malformed output"
+          );
+        }
+        throw err;
+      }
+    }
+    throw new TranslationFailedError("Gloss provider returned malformed output");
   }
 }
 
@@ -138,6 +185,44 @@ async function callProvider(
       await sleep(delay);
     }
   }
+}
+
+async function callGlossProvider(
+  provider: TranslationProvider,
+  word: string,
+  context: string
+): Promise<GlossEntry | null> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return validateGlossEntry(await provider.glossWord(word, context));
+    } catch (err) {
+      if (err instanceof TranslationFailedError) throw err;
+      if (err instanceof GlossShapeError) return null;
+      if (!isRateLimitError(err)) {
+        throw new TranslationFailedError("Gloss provider failed");
+      }
+      if (attempt >= MAX_RATE_LIMIT_RETRIES) {
+        throw new TranslationFailedError(
+          "Gloss provider rate limit not cleared after retries"
+        );
+      }
+      const delay =
+        parseRetryDelayMs(err) ?? DEFAULT_RETRY_DELAY_MS * (attempt + 1);
+      await sleep(delay);
+    }
+  }
+}
+
+export async function glossWord(
+  provider: TranslationProvider,
+  word: string,
+  context: string
+): Promise<GlossEntry> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = await callGlossProvider(provider, word, context);
+    if (result) return result;
+  }
+  throw new TranslationFailedError("Gloss provider returned malformed output");
 }
 
 // Runs the provider with the line-count contract: try the full batch

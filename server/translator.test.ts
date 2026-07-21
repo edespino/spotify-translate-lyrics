@@ -3,12 +3,13 @@ import {
   DEFAULT_MODEL,
   GeminiProvider,
   TranslationFailedError,
+  glossWord,
   isRateLimitError,
   parseRetryDelayMs,
   translateLines,
   translateLinesWithTitle,
 } from "./translator";
-import type { TrackMeta, TranslationProvider } from "./types";
+import type { GlossEntry, TrackMeta, TranslationProvider } from "./types";
 
 const generateContentMock = vi.hoisted(() => vi.fn());
 
@@ -31,6 +32,26 @@ function mockProvider(
     translate: vi.fn(async (lines: string[]) => {
       calls.push(lines);
       return impl(lines);
+    }),
+    glossWord: vi.fn(async (word: string) => ({
+      word,
+      gloss: "meaning",
+      partOfSpeech: "noun",
+      note: "",
+    })),
+  };
+}
+
+function mockGlossProvider(
+  impl: (word: string, context: string) => Promise<unknown>
+): TranslationProvider & { glossCalls: string[] } {
+  const glossCalls: string[] = [];
+  return {
+    glossCalls,
+    translate: vi.fn(async (lines: string[]) => lines),
+    glossWord: vi.fn(async (word: string, context: string) => {
+      glossCalls.push(word);
+      return impl(word, context) as Promise<GlossEntry>;
     }),
   };
 }
@@ -82,6 +103,99 @@ describe("GeminiProvider", () => {
       'Gemini model "retired-model" is unavailable. Set GEMINI_MODEL to a supported Gemini model, for example gemini-flash-lite-latest.'
     );
     expect(generateContentMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("glosses a word with a strict JSON object response", async () => {
+    generateContentMock.mockResolvedValue({
+      text: JSON.stringify({
+        word: "corazon",
+        gloss: "heart",
+        partOfSpeech: "noun",
+        note: "",
+      }),
+    });
+
+    const provider = new GeminiProvider("api-key");
+    await expect(
+      provider.glossWord("corazon", "Mi corazon late")
+    ).resolves.toEqual({
+      word: "corazon",
+      gloss: "heart",
+      partOfSpeech: "noun",
+      note: "",
+    });
+    expect(generateContentMock.mock.calls[0][0].contents).toContain(
+      "Output ONLY one JSON object"
+    );
+  });
+
+  it("retries malformed Gemini gloss output once", async () => {
+    generateContentMock
+      .mockResolvedValueOnce({ text: '{"word":"luz","gloss":5}' })
+      .mockResolvedValueOnce({
+        text: JSON.stringify({
+          word: "luz",
+          gloss: "light",
+          partOfSpeech: "noun",
+          note: "",
+        }),
+      });
+
+    const provider = new GeminiProvider("api-key");
+    await expect(provider.glossWord("luz", "Dame luz")).resolves.toEqual({
+      word: "luz",
+      gloss: "light",
+      partOfSpeech: "noun",
+      note: "",
+    });
+    expect(generateContentMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("glossWord", () => {
+  it("retries a malformed provider gloss once, then fails", async () => {
+    const p = mockGlossProvider(async () => ({
+      word: "luz",
+      gloss: 5,
+      partOfSpeech: "noun",
+      note: "",
+    }));
+
+    await expect(glossWord(p, "luz", "Dame luz")).rejects.toBeInstanceOf(
+      TranslationFailedError
+    );
+    expect(p.glossCalls).toHaveLength(2);
+  });
+
+  it("waits the suggested retryDelay on a gloss 429, then succeeds", async () => {
+    vi.useFakeTimers();
+    let call = 0;
+    const p = mockGlossProvider(async (word) => {
+      call++;
+      if (call === 1) {
+        throw rateLimitError(
+          'got status: 429. {"error":{"details":[{"retryDelay":"7s"}]}}'
+        );
+      }
+      return {
+        word,
+        gloss: "light",
+        partOfSpeech: "noun",
+        note: "",
+      };
+    });
+
+    const pending = glossWord(p, "luz", "Dame luz");
+    await vi.advanceTimersByTimeAsync(6999);
+    expect(p.glossCalls).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await pending).toEqual({
+      word: "luz",
+      gloss: "light",
+      partOfSpeech: "noun",
+      note: "",
+    });
+    expect(p.glossCalls).toHaveLength(2);
   });
 });
 
