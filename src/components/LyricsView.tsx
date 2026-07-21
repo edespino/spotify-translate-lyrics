@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import type { TranslationState } from "../App";
 import type { LyricsResult } from "../types";
 import type { GlossEntry } from "../gloss";
@@ -39,6 +40,11 @@ import {
   saveRecallMode,
   type MaskPhase,
 } from "./recall";
+import {
+  accentColor,
+  pastModeClass,
+  type AppearanceSettings,
+} from "./settings";
 
 type Field = "es" | "en";
 
@@ -55,6 +61,7 @@ interface Props {
   onReplay: (timeMs: number) => void;
   savedGlossKeys: ReadonlySet<string>;
   onSaveGloss: (entry: GlossEntry, contextLine: string) => void;
+  appearance: AppearanceSettings;
 }
 
 // Fraction of the pane height where the active line is anchored. Upper
@@ -93,6 +100,7 @@ export default function LyricsView({
   onReplay,
   savedGlossKeys,
   onSaveGloss,
+  appearance,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [focusedIndex, setFocusedIndex] = useState(-1);
@@ -414,12 +422,23 @@ export default function LyricsView({
   const toggleFocus = (i: number) =>
     setFocusedIndex(i === focusedIndex ? -1 : i);
 
+  // Appearance settings feed the CSS cascade through one custom property
+  // and one past-mode class on the container; the selectors below it are
+  // untouched.
+  const appearanceStyle = {
+    "--accent-active": accentColor(appearance.accent),
+  } as CSSProperties;
+  const appearanceClass = pastModeClass(appearance.pastMode);
+
   // English lyrics: one centered full-width pane, read-only. Same synced
   // scrolling, active-line highlight, and click-to-enlarge as the dual
   // view, but no translation column and no edit affordances.
   if (english) {
     return (
-      <div className="lyrics-view single">
+      <div
+        className={`lyrics-view single ${appearanceClass}`}
+        style={appearanceStyle}
+      >
         <div className="pane-headers single">
           <div className="pane-header">
             <span>English</span>
@@ -582,7 +601,7 @@ export default function LyricsView({
   };
 
   return (
-    <div className="lyrics-view">
+    <div className={`lyrics-view ${appearanceClass}`} style={appearanceStyle}>
       <div className="pane-headers">
         <div className="pane-header">
           <span>Español</span>

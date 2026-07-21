@@ -174,6 +174,26 @@ button.primary:hover {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  /* Appearance settings: LyricsView sets --accent-active inline from the
+     chosen accent and adds one past-* class; the row selectors below
+     only read the two custom properties. */
+  --accent-active: var(--text);
+  --past-color: #666;
+}
+
+/* Past-line treatments. "dim" fades lines already sung (kept at or above
+   3:1 contrast on #121212), "bright" is the original past-brighter look,
+   "neutral" matches upcoming lines. */
+.lyrics-view.past-dim {
+  --past-color: #666;
+}
+
+.lyrics-view.past-bright {
+  --past-color: #d0d0d0;
+}
+
+.lyrics-view.past-neutral {
+  --past-color: #8f8f8f;
 }
 
 .pane-headers {
@@ -242,9 +262,11 @@ button.primary:hover {
 }
 
 /* Active-recall mode toggle, same pill chrome as the badges. The Vocab
-   pill in the header shares the exact same visual language. */
+   and Settings pills in the header share the exact same visual
+   language. */
 .recall-toggle,
-.vocab-toggle {
+.vocab-toggle,
+.settings-toggle {
   background: none;
   border: 1px solid #333;
   color: var(--text-dim);
@@ -258,19 +280,22 @@ button.primary:hover {
 }
 
 .recall-toggle:hover,
-.vocab-toggle:hover {
+.vocab-toggle:hover,
+.settings-toggle:hover {
   border-color: var(--text-dim);
   color: var(--text);
 }
 
 .recall-toggle.on,
-.vocab-toggle.on {
+.vocab-toggle.on,
+.settings-toggle.on {
   border-color: var(--accent);
   color: var(--accent);
 }
 
 .recall-toggle:focus-visible,
-.vocab-toggle:focus-visible {
+.vocab-toggle:focus-visible,
+.settings-toggle:focus-visible {
   outline: 2px solid var(--accent);
 }
 
@@ -349,17 +374,20 @@ button.primary:hover {
   font-size: clamp(22px, 1.9vw, 32px);
   font-weight: 700;
   line-height: 1.35;
-  /* Upcoming lines. Past lines (.past) render brighter to encode
-     direction; both stay above 3:1 contrast on the #121212 background. */
+  /* Upcoming lines. Past lines (.past) take --past-color from the
+     past-mode class on the container; every mode stays at or above 3:1
+     contrast on the #121212 background. */
   color: #8f8f8f;
 }
 
 .lyric-row.past .lyric-cell {
-  color: #d0d0d0;
+  color: var(--past-color, #666);
 }
 
+/* Color only, never weight: a heavier active line would change glyph
+   widths and jitter the column alignment. */
 .lyric-row.active .lyric-cell {
-  color: var(--text);
+  color: var(--accent-active, var(--text));
 }
 
 /* Hover stays a step below the active line's white so it cannot be
@@ -685,9 +713,11 @@ button.primary:hover {
   pointer-events: none;
 }
 
-/* Vocabulary slide-over: fixed to the right edge, above the lyrics but
-   not a modal (no overlay, the lyrics keep scrolling behind it). */
-.vocab-panel {
+/* Vocabulary and settings slide-overs: fixed to the right edge, above
+   the lyrics but not a modal (no overlay, the lyrics keep scrolling
+   behind it). */
+.vocab-panel,
+.settings-panel {
   position: fixed;
   top: 0;
   right: 0;
@@ -702,7 +732,8 @@ button.primary:hover {
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .vocab-panel {
+  .vocab-panel,
+  .settings-panel {
     animation: vocab-slide-in 0.2s ease-out;
   }
 }
@@ -716,7 +747,8 @@ button.primary:hover {
   }
 }
 
-.vocab-panel-head {
+.vocab-panel-head,
+.settings-panel-head {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -724,7 +756,8 @@ button.primary:hover {
   border-bottom: 1px solid #2a2a2a;
 }
 
-.vocab-panel-title {
+.vocab-panel-title,
+.settings-panel-title {
   flex: 1;
   font-size: 13px;
   font-weight: 700;
@@ -734,7 +767,8 @@ button.primary:hover {
 }
 
 .vocab-action,
-.vocab-close {
+.vocab-close,
+.settings-close {
   background: none;
   border: 1px solid #333;
   color: var(--text-dim);
@@ -746,7 +780,8 @@ button.primary:hover {
 }
 
 .vocab-action:hover:not(:disabled),
-.vocab-close:hover {
+.vocab-close:hover,
+.settings-close:hover {
   border-color: var(--text-dim);
   color: var(--text);
 }
@@ -757,8 +792,96 @@ button.primary:hover {
 }
 
 .vocab-action:focus-visible,
-.vocab-close:focus-visible {
+.vocab-close:focus-visible,
+.settings-close:focus-visible {
   outline: 2px solid var(--accent);
+}
+
+/* Settings panel body: one section per control group. */
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.settings-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+}
+
+.settings-swatches {
+  display: flex;
+  gap: 10px;
+}
+
+/* Accent swatches: the color itself is the label; a white ring marks the
+   selected one, and an inset hairline keeps the white swatch visible on
+   the raised background. */
+.accent-swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  background: var(--swatch, var(--text));
+  background-clip: padding-box;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  padding: 0;
+}
+
+.accent-swatch:hover {
+  border-color: var(--text-dim);
+}
+
+.accent-swatch.selected {
+  border-color: var(--text);
+}
+
+.accent-swatch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.settings-options {
+  display: flex;
+  gap: 8px;
+}
+
+/* Past-line mode pills, same chrome as the header pills. */
+.settings-option {
+  background: none;
+  border: 1px solid #333;
+  color: var(--text-dim);
+  border-radius: 12px;
+  padding: 3px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings-option:hover {
+  border-color: var(--text-dim);
+  color: var(--text);
+}
+
+.settings-option.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.settings-option:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+.settings-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
 }
 
 .vocab-empty {
