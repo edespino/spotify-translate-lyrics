@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PositionTracker, findActiveLine } from "./sync";
+import { PositionTracker, SETTLE_WINDOW_MS, findActiveLine } from "./sync";
 import type { LyricLine } from "./types";
 
 const lines: LyricLine[] = [
@@ -95,13 +95,15 @@ describe("PositionTracker", () => {
     expect(t.positionAt(2000)).toBe(6000);
   });
 
-  it("does not snap back when the follow-up poll agrees with the nudge", () => {
+  it("anchors on a follow-up poll that agrees with the nudge", () => {
     const t = new PositionTracker();
     t.update(60000, true, 0);
     t.nudge(5000, 1000);
-    // At now=1500 interpolated is 5500; poll says 5400 (within threshold)
+    // At now=1500 interpolated is 5500; poll says 5400 (within threshold),
+    // confirming the seek: it becomes the anchor and ends the window.
     t.update(5400, true, 1500);
-    expect(t.positionAt(1500)).toBe(5500);
+    expect(t.positionAt(1500)).toBe(5400);
+    expect(t.positionAt(2500)).toBe(6400);
   });
 
   it("nudge holds the position while paused", () => {
@@ -123,5 +125,58 @@ describe("PositionTracker", () => {
     t.update(5000, true, 0);
     t.reset();
     expect(t.positionAt(1000)).toBe(0);
+  });
+});
+
+describe("PositionTracker seek settle window", () => {
+  it("ignores a stale pre-seek poll right after a nudge", () => {
+    const t = new PositionTracker();
+    t.update(20000, true, 0);
+    t.nudge(60000, 1000);
+    // Spotify has not applied the seek yet: the poll still says ~20s.
+    t.update(20050, true, 1050);
+    expect(t.positionAt(1050)).toBe(60050);
+  });
+
+  it("anchors on the first confirming poll and ends the window", () => {
+    const t = new PositionTracker();
+    t.update(20000, true, 0);
+    t.nudge(60000, 1000);
+    t.update(20050, true, 1050);
+    t.update(60100, true, 1300);
+    expect(t.positionAt(1300)).toBe(60100);
+    expect(t.positionAt(1400)).toBe(60200);
+    // Window over: a later divergent poll (external seek) snaps normally.
+    t.update(20000, true, 2000);
+    expect(t.positionAt(2000)).toBe(20000);
+  });
+
+  it("lets an external seek win once the window expires", () => {
+    const t = new PositionTracker();
+    t.update(20000, true, 0);
+    t.nudge(60000, 1000);
+    t.update(20050, true, 1050);
+    const after = 1000 + SETTLE_WINDOW_MS;
+    t.update(30000, true, after);
+    expect(t.positionAt(after)).toBe(30000);
+  });
+
+  it("honors a pause during the window without anchoring to the stale poll", () => {
+    const t = new PositionTracker();
+    t.update(20000, true, 0);
+    t.nudge(60000, 1000);
+    // Paused, but position still reports the pre-seek region: freeze at
+    // the interpolated post-seek position instead.
+    t.update(20050, false, 1500);
+    expect(t.positionAt(3000)).toBe(60500);
+  });
+
+  it("clears the window on reset", () => {
+    const t = new PositionTracker();
+    t.update(20000, true, 0);
+    t.nudge(60000, 1000);
+    t.reset();
+    t.update(20050, true, 1050);
+    expect(t.positionAt(1050)).toBe(20050);
   });
 });

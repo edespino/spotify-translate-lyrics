@@ -201,6 +201,8 @@ export default function App() {
     trackIdRef.current = trackId;
     setActiveIndex(-1);
     setTranslation({ status: "idle" });
+    clearTimeout(noticeTimer.current);
+    setNotice(null);
     if (!playback || !trackId) {
       setLyrics({ status: "idle" });
       return;
