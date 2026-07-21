@@ -174,10 +174,6 @@ button.primary:hover {
   text-align: center;
 }
 
-.lyrics-view.single .lyric-row.focused .lyric-cell {
-  transform-origin: center center;
-}
-
 .translation-error {
   display: inline-flex;
   align-items: center;
@@ -271,20 +267,16 @@ button.primary:hover {
   color: #d6d6d6;
 }
 
-/* Enlarge scales each cell from its own edge, not the row, so the two
-   columns keep their alignment at the central gutter. */
+/* The focused accent color is unconditional; the enlarge transform is
+   motion and lives in the no-preference media block below. */
 .lyric-row.focused .lyric-cell {
-  transform: scale(1.05);
-  transform-origin: left center;
   color: var(--accent);
 }
 
 /* Dual-pane only: the Spanish column right-aligns so every pair meets
-   the central gutter with a constant jump; its cells scale from the
-   right edge so enlarging keeps the text anchored at the gutter. */
+   the central gutter with a constant jump. */
 .lyrics-view:not(.single) .lyric-row .lyric-cell:first-child {
   text-align: right;
-  transform-origin: right center;
 }
 
 .lyrics-view:not(.single) .lyric-row .lyric-cell:first-child .edit-input {
@@ -300,6 +292,24 @@ button.primary:hover {
 
   .lyric-row.active:not(.focused) .lyric-cell {
     transform: scale(1.02);
+  }
+
+  /* Enlarge scales each cell from its own edge, not the row, so the two
+     columns keep their alignment at the central gutter. */
+  .lyric-row.focused .lyric-cell {
+    transform: scale(1.05);
+    transform-origin: left center;
+  }
+
+  /* Spanish cells scale from the right edge so enlarging keeps the text
+     anchored at the central gutter; single-pane centered text scales
+     from its center. */
+  .lyrics-view:not(.single) .lyric-row .lyric-cell:first-child {
+    transform-origin: right center;
+  }
+
+  .lyrics-view.single .lyric-row.focused .lyric-cell {
+    transform-origin: center center;
   }
 
   .lyric-row.active .note {
