@@ -10,6 +10,9 @@ export default defineConfig({
     // (http://127.0.0.1:5173/callback) always matches.
     host: "127.0.0.1",
     port: Number(process.env.VITE_PORT || 5173),
+    // Silent port drift creates a new origin, orphaning stored Spotify tokens.
+    // Failing loudly is correct so the stray dev server can be stopped.
+    strictPort: true,
     proxy: {
       "/api": `http://127.0.0.1:${serverPort}`,
     },

@@ -34,6 +34,7 @@ You need Node 20+ and two free accounts.
    ```
 
    Open http://127.0.0.1:5173 (use 127.0.0.1, not localhost, so the Spotify redirect matches), click Connect Spotify, and play a Spanish song.
+   A second dev server now fails with a port-in-use error instead of silently starting on another port; stop the stray server instead.
 
 ## Usage notes
 
